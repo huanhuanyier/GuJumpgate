@@ -45,6 +45,9 @@
       if (state.panelMode === 'local-cpa-json') {
         return 'local-cpa-json';
       }
+      if (state.panelMode === 'local-cpa-json-step5') {
+        return 'local-cpa-json-step5';
+      }
       if (state.panelMode === 'local-cpa-json-no-rt') {
         return 'local-cpa-json-no-rt';
       }

@@ -35,6 +35,7 @@
       failNodeFromBackground = null,
       fetch: fetchImpl = null,
       getState = null,
+      prepareHostedSmsPoolEntryForRun = null,
       registerTab,
       sendTabMessageUntilStopped,
       setState,
@@ -1075,6 +1076,10 @@
       if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
         await executeGpcCheckoutCreate(state);
         return;
+      }
+
+      if (paymentMethod === PLUS_PAYMENT_METHOD_PAYPAL && typeof prepareHostedSmsPoolEntryForRun === 'function') {
+        await prepareHostedSmsPoolEntryForRun(state);
       }
 
       const paymentMethodLabel = getPlusPaymentMethodLabel(paymentMethod);

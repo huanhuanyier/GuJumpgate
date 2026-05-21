@@ -120,6 +120,7 @@
         <span class="data-label">导出至</span>
         <select id="select-panel-mode" class="data-select">
           <option value="local-cpa-json" selected>本地CPA JSON 有RT</option>
+          <option value="local-cpa-json-step5">本地CPA JSON 到第5步</option>
           <option value="local-cpa-json-no-rt">本地CPA JSON 无RT</option>
           <option value="cpa">CPA 面板</option>
           <option value="sub2api">SUB2API</option>
@@ -368,6 +369,12 @@
               placeholder="1234567890&#10;&#10;https://mail.test.com/api/text-relay/eca_tr_xxxxxxxxx"></textarea>
             <div class="data-inline">
               <button id="btn-hosted-sms-pool-import" class="btn btn-primary btn-sm" type="button">导入号码</button>
+            </div>
+            <div class="data-inline">
+              <input id="input-hosted-sms-pool-excel-path" class="data-input mono" type="text"
+                placeholder="D:\path\hosted-sms.xlsx" />
+              <button id="btn-hosted-sms-pool-excel-browse" class="btn btn-outline btn-sm" type="button">选择 Excel</button>
+              <button id="btn-hosted-sms-pool-excel-import" class="btn btn-outline btn-sm" type="button">读取 Excel</button>
             </div>
             <div class="icloud-card">
               <div id="hosted-sms-pool-summary" class="icloud-summary">导入 PayPal Hosted 接码号码，每行一个号码和验证码接口。</div>

@@ -141,6 +141,11 @@ const LOCAL_CPA_JSON_NO_RT_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.get
   panelMode: 'local-cpa-json-no-rt',
   plusModeEnabled: true,
 }) || PLUS_PAYPAL_STEP_DEFINITIONS.slice(0, 6);
+const LOCAL_CPA_JSON_STEP5_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  panelMode: 'local-cpa-json-step5',
+  plusModeEnabled: true,
+}) || PLUS_PAYPAL_STEP_DEFINITIONS.slice(0, 5);
 const PLUS_STEP_DEFINITIONS = PLUS_PAYPAL_STEP_DEFINITIONS;
 const ALL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getAllSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
@@ -157,6 +162,8 @@ const ALL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getAllSteps?.({
   ...PLUS_GPC_STEP_DEFINITIONS,
   ...PLUS_GPC_PHONE_STEP_DEFINITIONS,
   ...PLUS_GPC_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
+  ...LOCAL_CPA_JSON_STEP5_STEP_DEFINITIONS,
+  ...LOCAL_CPA_JSON_NO_RT_STEP_DEFINITIONS,
 ];
 const STEP_IDS = Array.from(new Set(ALL_STEP_DEFINITIONS
   .map((definition) => Number(definition?.id))
@@ -2480,6 +2487,9 @@ function normalizePanelMode(value = '') {
   if (normalized === DEFAULT_PANEL_MODE) {
     return DEFAULT_PANEL_MODE;
   }
+  if (normalized === 'local-cpa-json-step5') {
+    return 'local-cpa-json-step5';
+  }
   if (normalized === 'local-cpa-json-no-rt') {
     return 'local-cpa-json-no-rt';
   }
@@ -2910,11 +2920,19 @@ function normalizePersistentSettingValue(key, value) {
         const item = usage && typeof usage === 'object' && !Array.isArray(usage) ? usage : {};
         const legacyUsedCount = Number(item.usedAt) > 0 ? 1 : 0;
         const useCount = Math.max(0, Math.floor(Number(item.useCount ?? item.usageCount ?? legacyUsedCount) || 0));
+        const excelSource = item.excelSource && typeof item.excelSource === 'object' && !Array.isArray(item.excelSource)
+          ? {
+            filePath: String(item.excelSource.filePath || '').trim(),
+            sheetName: String(item.excelSource.sheetName || '').trim(),
+            rowNumber: Math.max(0, Math.floor(Number(item.excelSource.rowNumber) || 0)),
+          }
+          : null;
         return [String(key || '').trim(), {
           useCount,
           usedAt: Math.max(0, Number(item.usedAt) || 0),
           lastAttemptAt: Math.max(0, Number(item.lastAttemptAt) || 0),
           lastError: String(item.lastError || '').trim(),
+          ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
         }];
       }).filter(([key]) => Boolean(key)));
     case 'paypalEmail':
@@ -4868,6 +4886,247 @@ async function ensureHotmailAccountForFlow(options = {}) {
 function buildHotmailLocalEndpoint(baseUrl, path) {
   const normalizedBaseUrl = normalizeHotmailLocalBaseUrl(baseUrl);
   return new URL(path, `${normalizedBaseUrl}/`).toString();
+}
+
+const HOSTED_SMS_SEPARATOR = '----';
+
+function normalizeHostedSmsPoolText(value = '') {
+  return String(value || '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function normalizeHostedSmsPoolUrl(value = '') {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) {
+    return '';
+  }
+  try {
+    const parsed = new URL(rawValue);
+    parsed.searchParams.delete('t');
+    return parsed.toString();
+  } catch {
+    return rawValue
+      .replace(/([?&])t=\d+(?=(&|$))/i, '$1')
+      .replace(/[?&]$/g, '');
+  }
+}
+
+function buildHostedSmsPoolKey(phone = '', verificationUrl = '') {
+  const normalizedPhone = String(phone || '').trim();
+  const normalizedUrl = normalizeHostedSmsPoolUrl(verificationUrl);
+  return normalizedPhone && normalizedUrl ? `${normalizedPhone}${HOSTED_SMS_SEPARATOR}${normalizedUrl}` : '';
+}
+
+function parseHostedSmsPoolEntries(text = '') {
+  const lines = normalizeHostedSmsPoolText(text).split('\n').filter(Boolean);
+  const seen = new Set();
+  const entries = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const separatorIndex = line.indexOf(HOSTED_SMS_SEPARATOR);
+    const hasSeparator = separatorIndex > 0;
+    const phone = hasSeparator ? line.slice(0, separatorIndex).trim() : line.trim();
+    const verificationUrl = hasSeparator
+      ? normalizeHostedSmsPoolUrl(line.slice(separatorIndex + HOSTED_SMS_SEPARATOR.length))
+      : normalizeHostedSmsPoolUrl(lines[index + 1] || '');
+    if (!hasSeparator && verificationUrl) {
+      index += 1;
+    }
+    const key = buildHostedSmsPoolKey(phone, verificationUrl);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    entries.push({ key, phone, verificationUrl });
+  }
+  return entries;
+}
+
+function normalizeHostedSmsPoolUsageMap(value = {}) {
+  return normalizePersistentSettingValue('hostedCheckoutSmsPoolUsage', value);
+}
+
+function pickHostedSmsPoolEntryForRun(state = {}) {
+  const usage = normalizeHostedSmsPoolUsageMap(state.hostedCheckoutSmsPoolUsage);
+  return parseHostedSmsPoolEntries(state.hostedCheckoutSmsPoolText)
+    .map((entry, index) => ({
+      ...entry,
+      index,
+      useCount: Math.max(0, Math.floor(Number(usage[entry.key]?.useCount) || 0)),
+      lastAttemptAt: Math.max(0, Number(usage[entry.key]?.lastAttemptAt) || 0),
+      excelSource: usage[entry.key]?.excelSource || null,
+    }))
+    .sort((left, right) => (
+      left.useCount - right.useCount
+      || left.lastAttemptAt - right.lastAttemptAt
+      || left.index - right.index
+    ))[0] || null;
+}
+
+async function prepareHostedSmsPoolEntryForRun(state = {}) {
+  const entry = pickHostedSmsPoolEntryForRun(state);
+  if (!entry) {
+    return null;
+  }
+  const now = Date.now();
+  const usage = normalizeHostedSmsPoolUsageMap(state.hostedCheckoutSmsPoolUsage);
+  usage[entry.key] = {
+    ...(usage[entry.key] || {}),
+    useCount: Math.max(0, Math.floor(Number(usage[entry.key]?.useCount) || 0)),
+    usedAt: Math.max(0, Number(usage[entry.key]?.usedAt) || 0),
+    lastAttemptAt: now,
+    lastError: '',
+    ...(entry.excelSource ? { excelSource: entry.excelSource } : {}),
+  };
+  const updates = {
+    hostedCheckoutCurrentSmsEntry: {
+      key: entry.key,
+      phone: entry.phone,
+      verificationUrl: entry.verificationUrl,
+      useCount: entry.useCount,
+      ...(entry.excelSource ? { excelSource: entry.excelSource } : {}),
+    },
+    hostedCheckoutPhoneNumber: entry.phone,
+    hostedCheckoutVerificationUrl: entry.verificationUrl,
+    hostedCheckoutSmsPoolUsage: usage,
+  };
+  await setPersistentSettings({
+    hostedCheckoutPhoneNumber: entry.phone,
+    hostedCheckoutVerificationUrl: entry.verificationUrl,
+    hostedCheckoutSmsPoolUsage: usage,
+  });
+  await setState(updates);
+  broadcastDataUpdate(updates);
+  await addLog(`Hosted 接码池：本轮选择 ${entry.phone}（成功次数 ${entry.useCount}）。`, 'info');
+  return updates.hostedCheckoutCurrentSmsEntry;
+}
+
+async function requestHostedSmsExcelImport(filePath, options = {}) {
+  const state = await getState();
+  const serviceSettings = getHotmailServiceSettings(state);
+  let response;
+  try {
+    response = await fetch(buildHotmailLocalEndpoint(serviceSettings.localBaseUrl, '/import-hosted-sms-excel'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        filePath,
+        sheetName: options?.sheetName || '',
+      }),
+    });
+  } catch (err) {
+    throw new Error(`Hosted 接码池 Excel 导入请求失败：${err.message}`);
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    payload = null;
+  }
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `Hosted 接码池 Excel 导入失败：HTTP ${response.status}`);
+  }
+  return payload || { entries: [] };
+}
+
+async function browseHostedSmsExcelFile() {
+  const state = await getState();
+  const serviceSettings = getHotmailServiceSettings(state);
+  let response;
+  try {
+    response = await fetch(buildHotmailLocalEndpoint(serviceSettings.localBaseUrl, '/browse-excel-file'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+  } catch (err) {
+    throw new Error(`打开 Excel 文件选择器失败：${err.message}`);
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    payload = null;
+  }
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `打开 Excel 文件选择器失败：HTTP ${response.status}`);
+  }
+  return payload || { filePath: '' };
+}
+
+async function incrementHostedSmsExcelRowForState(state = {}, status = '') {
+  if (String(status || '').trim().toLowerCase() !== 'success') {
+    return null;
+  }
+  const currentEntry = state.hostedCheckoutCurrentSmsEntry || {};
+  const key = currentEntry.key || buildHostedSmsPoolKey(currentEntry.phone, currentEntry.verificationUrl);
+  if (!key) {
+    return null;
+  }
+  const usage = normalizeHostedSmsPoolUsageMap(state.hostedCheckoutSmsPoolUsage);
+  const source = currentEntry.excelSource || usage[key]?.excelSource || null;
+  if (!source?.filePath || !source?.rowNumber) {
+    return null;
+  }
+
+  const serviceSettings = getHotmailServiceSettings(state);
+  let response;
+  try {
+    response = await fetch(buildHotmailLocalEndpoint(serviceSettings.localBaseUrl, '/increment-hosted-sms-excel-row'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        filePath: source.filePath,
+        sheetName: source.sheetName || '',
+        rowNumber: source.rowNumber,
+      }),
+    });
+  } catch (err) {
+    throw new Error(`Hosted 接码池 Excel 回写请求失败：${err.message}`);
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    payload = null;
+  }
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `Hosted 接码池 Excel 回写失败：HTTP ${response.status}`);
+  }
+
+  const nextUsage = normalizeHostedSmsPoolUsageMap(usage);
+  const nextCount = Math.max(
+    Math.max(0, Math.floor(Number(nextUsage[key]?.useCount) || 0)) + 1,
+    Math.max(0, Math.floor(Number(payload?.successCount) || 0))
+  );
+  nextUsage[key] = {
+    ...(nextUsage[key] || {}),
+    useCount: nextCount,
+    usedAt: Date.now(),
+    lastAttemptAt: Math.max(0, Number(nextUsage[key]?.lastAttemptAt) || 0),
+    lastError: '',
+    excelSource: source,
+  };
+  await setPersistentSettings({ hostedCheckoutSmsPoolUsage: nextUsage });
+  await setState({ hostedCheckoutSmsPoolUsage: nextUsage });
+  broadcastDataUpdate({ hostedCheckoutSmsPoolUsage: nextUsage });
+  return payload || { ok: true, successCount: nextCount };
 }
 
 async function requestHotmailRemoteMailbox(account, mailbox = 'INBOX') {
@@ -8263,6 +8522,9 @@ function getPanelMode(state = {}) {
   if (state.panelMode === DEFAULT_PANEL_MODE) {
     return DEFAULT_PANEL_MODE;
   }
+  if (state.panelMode === 'local-cpa-json-step5') {
+    return 'local-cpa-json-step5';
+  }
   if (state.panelMode === 'local-cpa-json-no-rt') {
     return 'local-cpa-json-no-rt';
   }
@@ -11527,6 +11789,12 @@ async function appendAndBroadcastAccountRunRecord(status, stateOverride = null, 
     return null;
   }
 
+  try {
+    await incrementHostedSmsExcelRowForState(state, resolvedStatus);
+  } catch (err) {
+    await addLog(`Hosted 接码池 Excel 回写失败：${getErrorMessage(err)}`, 'warn');
+  }
+
   await broadcastAccountRunHistoryUpdate();
   return record;
 }
@@ -13104,6 +13372,7 @@ const plusCheckoutCreateExecutor = self.MultiPageBackgroundPlusCheckoutCreate?.c
   getState,
   getLastNodeIdForState,
   markCurrentRegistrationAccountUsed,
+  prepareHostedSmsPoolEntryForRun,
   registerTab,
   sendTabMessageUntilStopped,
   setState,
@@ -13279,6 +13548,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   addLog,
   appendAccountRunRecord: (...args) => appendAndBroadcastAccountRunRecord(...args),
   batchUpdateLuckmailPurchases,
+  browseHostedSmsExcelFile,
   buildLocalhostCleanupPrefix,
   buildLuckmailSessionSettingsPayload,
   buildPersistentSettingsPayload,
@@ -13373,6 +13643,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   patchHotmailAccount,
   patchMail2925Account,
   registerTab,
+  requestHostedSmsExcelImport,
   requestStop,
   probeIpProxyExit,
   resetState,
@@ -13464,12 +13735,16 @@ const plusGoPayPhoneBoundEmailReloginStepRegistry = buildStepRegistry(PLUS_GOPAY
 const plusGpcStepRegistry = buildStepRegistry(PLUS_GPC_STEP_DEFINITIONS);
 const plusGpcPhoneStepRegistry = buildStepRegistry(PLUS_GPC_PHONE_STEP_DEFINITIONS);
 const plusGpcPhoneBoundEmailReloginStepRegistry = buildStepRegistry(PLUS_GPC_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS);
+const localCpaJsonStep5StepRegistry = buildStepRegistry(LOCAL_CPA_JSON_STEP5_STEP_DEFINITIONS);
 const localCpaJsonNoRtStepRegistry = buildStepRegistry(LOCAL_CPA_JSON_NO_RT_STEP_DEFINITIONS);
 
 function getStepRegistryForState(state = {}) {
   const activeFlowId = String(state?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
   if (activeFlowId !== DEFAULT_ACTIVE_FLOW_ID) {
     throw new Error(`当前尚未注册 flow=${activeFlowId} 的步骤执行器。`);
+  }
+  if (getPanelMode(state) === 'local-cpa-json-step5') {
+    return localCpaJsonStep5StepRegistry;
   }
   if (getPanelMode(state) === 'local-cpa-json-no-rt') {
     return localCpaJsonNoRtStepRegistry;

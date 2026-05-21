@@ -147,6 +147,8 @@
       patchHotmailAccount,
       pollContributionStatus,
       registerTab,
+      browseHostedSmsExcelFile = null,
+      requestHostedSmsExcelImport = null,
       requestStop,
       probeIpProxyExit,
       handleCloudflareSecurityBlocked,
@@ -188,6 +190,95 @@
       upsertHotmailAccount,
       verifyHotmailAccount,
     } = deps;
+
+    const HOSTED_SMS_SEPARATOR = '----';
+
+    function normalizeHostedSmsPoolText(value = '') {
+      return String(value || '')
+        .replace(/\r/g, '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .join('\n');
+    }
+
+    function normalizeHostedSmsPoolUrl(value = '') {
+      const rawValue = String(value || '').trim();
+      if (!rawValue) {
+        return '';
+      }
+      try {
+        const parsed = new URL(rawValue);
+        parsed.searchParams.delete('t');
+        return parsed.toString();
+      } catch {
+        return rawValue
+          .replace(/([?&])t=\d+(?=(&|$))/i, '$1')
+          .replace(/[?&]$/g, '');
+      }
+    }
+
+    function buildHostedSmsPoolKey(phone = '', verificationUrl = '') {
+      const normalizedPhone = String(phone || '').trim();
+      const normalizedUrl = normalizeHostedSmsPoolUrl(verificationUrl);
+      return normalizedPhone && normalizedUrl ? `${normalizedPhone}${HOSTED_SMS_SEPARATOR}${normalizedUrl}` : '';
+    }
+
+    function parseHostedSmsPoolEntries(text = '') {
+      const lines = normalizeHostedSmsPoolText(text).split('\n').filter(Boolean);
+      const seen = new Set();
+      const entries = [];
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const separatorIndex = line.indexOf(HOSTED_SMS_SEPARATOR);
+        const hasSeparator = separatorIndex > 0;
+        const phone = hasSeparator ? line.slice(0, separatorIndex).trim() : line.trim();
+        const verificationUrl = hasSeparator
+          ? normalizeHostedSmsPoolUrl(line.slice(separatorIndex + HOSTED_SMS_SEPARATOR.length))
+          : normalizeHostedSmsPoolUrl(lines[index + 1] || '');
+        if (!hasSeparator && verificationUrl) {
+          index += 1;
+        }
+        const key = buildHostedSmsPoolKey(phone, verificationUrl);
+        if (!key || seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        entries.push({ key, phone, verificationUrl });
+      }
+      return entries;
+    }
+
+    function hostedSmsEntriesToText(entries = []) {
+      return parseHostedSmsPoolEntries(
+        entries.map((entry) => `${entry.phone}${HOSTED_SMS_SEPARATOR}${entry.verificationUrl}`).join('\n')
+      )
+        .map((entry) => `${entry.phone}${HOSTED_SMS_SEPARATOR}${entry.verificationUrl}`)
+        .join('\n');
+    }
+
+    function normalizeHostedSmsPoolUsage(value = {}) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+      }
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+        const usage = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
+        const excelSource = usage.excelSource && typeof usage.excelSource === 'object' && !Array.isArray(usage.excelSource)
+          ? {
+            filePath: String(usage.excelSource.filePath || '').trim(),
+            sheetName: String(usage.excelSource.sheetName || '').trim(),
+            rowNumber: Math.max(0, Math.floor(Number(usage.excelSource.rowNumber) || 0)),
+          }
+          : null;
+        return [String(key || '').trim(), {
+          useCount: Math.max(0, Math.floor(Number(usage.useCount ?? usage.usageCount) || 0)),
+          usedAt: Math.max(0, Number(usage.usedAt) || 0),
+          lastAttemptAt: Math.max(0, Number(usage.lastAttemptAt) || 0),
+          lastError: String(usage.lastError || '').trim(),
+          ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
+        }];
+      }).filter(([key]) => Boolean(key)));
+    }
 
     function preserveKeyFromState(updates, currentState, key) {
       if (!Object.prototype.hasOwnProperty.call(updates, key)) {
@@ -1641,6 +1732,91 @@
         case 'UPSERT_HOTMAIL_ACCOUNT': {
           const account = await upsertHotmailAccount(message.payload || {});
           return { ok: true, account };
+        }
+
+        case 'IMPORT_HOSTED_SMS_EXCEL': {
+          if (typeof requestHostedSmsExcelImport !== 'function') {
+            throw new Error('当前版本未接入 Hosted 接码池 Excel 导入。');
+          }
+          const filePath = String(message.payload?.filePath || '').trim();
+          if (!filePath) {
+            throw new Error('请先填写 Excel 文件完整路径。');
+          }
+          const result = await requestHostedSmsExcelImport(filePath, message.payload || {});
+          const currentState = await getState();
+          const entries = parseHostedSmsPoolEntries(currentState?.hostedCheckoutSmsPoolText);
+          const usage = normalizeHostedSmsPoolUsage(currentState?.hostedCheckoutSmsPoolUsage);
+          const knownKeys = new Set(entries.map((entry) => entry.key));
+          let importedCount = 0;
+          let updatedCount = 0;
+
+          for (const rawEntry of result.entries || []) {
+            const phone = String(rawEntry?.phone || '').trim();
+            const verificationUrl = normalizeHostedSmsPoolUrl(rawEntry?.verificationUrl || rawEntry?.link || rawEntry?.url);
+            const key = buildHostedSmsPoolKey(phone, verificationUrl);
+            if (!key) {
+              continue;
+            }
+            if (!knownKeys.has(key)) {
+              knownKeys.add(key);
+              entries.push({ key, phone, verificationUrl });
+              importedCount += 1;
+            } else {
+              updatedCount += 1;
+            }
+            const source = rawEntry.excelSource && typeof rawEntry.excelSource === 'object' && !Array.isArray(rawEntry.excelSource)
+              ? rawEntry.excelSource
+              : {};
+            const excelSource = {
+              filePath: String(source.filePath || result.filePath || filePath).trim(),
+              sheetName: String(source.sheetName || result.sheetName || '').trim(),
+              rowNumber: Math.max(0, Math.floor(Number(source.rowNumber) || 0)),
+            };
+            usage[key] = {
+              ...(usage[key] || {}),
+              useCount: Math.max(0, Math.floor(Number(rawEntry.successCount ?? rawEntry.useCount) || 0)),
+              usedAt: Math.max(0, Number(usage[key]?.usedAt) || 0),
+              lastAttemptAt: Math.max(0, Number(usage[key]?.lastAttemptAt) || 0),
+              lastError: String(usage[key]?.lastError || '').trim(),
+              ...(excelSource.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
+            };
+          }
+
+          const hostedCheckoutSmsPoolText = hostedSmsEntriesToText(entries);
+          const hostedCheckoutSmsPoolUsage = normalizeHostedSmsPoolUsage(usage);
+          const updates = {
+            hostedCheckoutSmsPoolText,
+            hostedCheckoutSmsPoolUsage,
+          };
+          if (typeof setPersistentSettings === 'function') {
+            await setPersistentSettings(updates);
+          }
+          if (typeof setState === 'function') {
+            await setState(updates);
+          }
+          if (typeof broadcastDataUpdate === 'function') {
+            broadcastDataUpdate(updates);
+          }
+          await addLog?.(`Hosted 接码池 Excel 已读取：新增 ${importedCount} 条，更新 ${updatedCount} 条。`, 'ok');
+          return {
+            ok: true,
+            importedCount,
+            updatedCount,
+            entries: result.entries || [],
+            filePath: result.filePath || filePath,
+            sheetName: result.sheetName || '',
+          };
+        }
+
+        case 'BROWSE_HOSTED_SMS_EXCEL': {
+          if (typeof browseHostedSmsExcelFile !== 'function') {
+            throw new Error('当前版本未接入 Hosted 接码池 Excel 文件选择。');
+          }
+          const result = await browseHostedSmsExcelFile();
+          return {
+            ok: true,
+            filePath: result.filePath || '',
+          };
         }
 
         case 'UPSERT_PAYPAL_ACCOUNT': {

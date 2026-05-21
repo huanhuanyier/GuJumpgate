@@ -6,6 +6,7 @@
   const PLUS_PAYMENT_METHOD_GOPAY = 'gopay';
   const PLUS_PAYMENT_METHOD_GPC_HELPER = 'gpc-helper';
   const PLUS_PAYMENT_STEP_KEY = 'paypal-approve';
+  const LOCAL_CPA_JSON_STEP5_PANEL_MODE = 'local-cpa-json-step5';
   const LOCAL_CPA_JSON_NO_RT_PANEL_MODE = 'local-cpa-json-no-rt';
   const SIGNUP_METHOD_EMAIL = 'email';
   const SIGNUP_METHOD_PHONE = 'phone';
@@ -35,6 +36,7 @@
     { id: 9, order: 90, key: 'plus-checkout-return', title: '订阅回跳确认', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-return' },
   ];
   const PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS = PLUS_PAYPAL_PREFIX_STEP_DEFINITIONS.slice(0, 6);
+  const LOCAL_CPA_JSON_STEP5_STEP_DEFINITIONS = PLUS_PAYPAL_PREFIX_STEP_DEFINITIONS.slice(0, 5);
   const LOCAL_CPA_JSON_NO_RT_EXPORT_STEP_DEFINITION = {
     id: 7,
     order: 70,
@@ -225,6 +227,9 @@
     const signupMethod = getResolvedSignupMethod(options);
     const reloginAfterBindEmail = signupMethod === SIGNUP_METHOD_PHONE
       && isPhoneSignupReloginAfterBindEmailEnabled(options);
+    if (panelMode === LOCAL_CPA_JSON_STEP5_PANEL_MODE) {
+      return LOCAL_CPA_JSON_STEP5_STEP_DEFINITIONS;
+    }
     if (panelMode === LOCAL_CPA_JSON_NO_RT_PANEL_MODE) {
       return [
         ...PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS,
@@ -306,6 +311,7 @@
           ...NORMAL_STEP_DEFINITIONS,
           ...NORMAL_PHONE_STEP_DEFINITIONS,
           ...NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
+          ...LOCAL_CPA_JSON_STEP5_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS,
           LOCAL_CPA_JSON_NO_RT_EXPORT_STEP_DEFINITION,

@@ -208,6 +208,9 @@ const btnHostedSmsPoolClearUsed = document.getElementById('btn-hosted-sms-pool-c
 const btnHostedSmsPoolDeleteAll = document.getElementById('btn-hosted-sms-pool-delete-all');
 const inputHostedSmsPoolImport = document.getElementById('input-hosted-sms-pool-import');
 const btnHostedSmsPoolImport = document.getElementById('btn-hosted-sms-pool-import');
+const inputHostedSmsPoolExcelPath = document.getElementById('input-hosted-sms-pool-excel-path');
+const btnHostedSmsPoolExcelBrowse = document.getElementById('btn-hosted-sms-pool-excel-browse');
+const btnHostedSmsPoolExcelImport = document.getElementById('btn-hosted-sms-pool-excel-import');
 const hostedSmsPoolSummary = document.getElementById('hosted-sms-pool-summary');
 const inputHostedSmsPoolSearch = document.getElementById('input-hosted-sms-pool-search');
 const selectHostedSmsPoolFilter = document.getElementById('select-hosted-sms-pool-filter');
@@ -795,6 +798,7 @@ const HERO_SMS_COUNTRY_ISO_CODE_BY_NAME = (() => {
 })();
 const LOCAL_CPA_JSON_PANEL_MODE = 'local-cpa-json';
 const LOCAL_CPA_JSON_NO_RT_PANEL_MODE = 'local-cpa-json-no-rt';
+const LOCAL_CPA_JSON_STEP5_PANEL_MODE = 'local-cpa-json-step5';
 const DEFAULT_PANEL_MODE = LOCAL_CPA_JSON_PANEL_MODE;
 const DEFAULT_LOCAL_CPA_JSON_RELATIVE_AUTH_DIR = '.cli-proxy-api';
 const DEFAULT_LOCAL_CPA_STEP9_MODE = 'submit';
@@ -7937,8 +7941,12 @@ function normalizePanelMode(value = '') {
   const localCpaJsonNoRtMode = typeof LOCAL_CPA_JSON_NO_RT_PANEL_MODE === 'string'
     ? LOCAL_CPA_JSON_NO_RT_PANEL_MODE
     : 'local-cpa-json-no-rt';
+  const localCpaJsonStep5Mode = typeof LOCAL_CPA_JSON_STEP5_PANEL_MODE === 'string'
+    ? LOCAL_CPA_JSON_STEP5_PANEL_MODE
+    : 'local-cpa-json-step5';
   if (
     normalized === localCpaJsonMode
+    || normalized === localCpaJsonStep5Mode
     || normalized === localCpaJsonNoRtMode
     || normalized === 'sub2api'
     || normalized === 'codex2api'
@@ -9322,11 +9330,21 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
   const noRtPanelMode = typeof LOCAL_CPA_JSON_NO_RT_PANEL_MODE === 'string'
     ? LOCAL_CPA_JSON_NO_RT_PANEL_MODE
     : 'local-cpa-json-no-rt';
+  const step5PanelMode = typeof LOCAL_CPA_JSON_STEP5_PANEL_MODE === 'string'
+    ? LOCAL_CPA_JSON_STEP5_PANEL_MODE
+    : 'local-cpa-json-step5';
   const nextPanelMode = String(options.panelMode || (typeof latestState !== 'undefined' ? latestState?.panelMode : '') || '').trim().toLowerCase();
-  const useNoRtWorkflow = nextPanelMode === noRtPanelMode;
+  const useLocalCpaSpecialWorkflow = nextPanelMode === noRtPanelMode || nextPanelMode === step5PanelMode;
   const currentlyUsingNoRtWorkflow = (typeof workflowNodes !== 'undefined' ? workflowNodes : [])
     .some((node) => String(node?.nodeId || '').trim() === 'local-cpa-json-export');
-  const noRtWorkflowModeChanged = useNoRtWorkflow !== currentlyUsingNoRtWorkflow;
+  const currentNodes = typeof workflowNodes !== 'undefined' ? workflowNodes : [];
+  const currentlyUsingStep5Workflow = currentNodes.some((node) => String(node?.nodeId || '').trim() === 'fill-profile')
+    && !currentNodes.some((node) => String(node?.nodeId || '').trim() === 'plus-checkout-create');
+  const specialWorkflowModeChanged = nextPanelMode === noRtPanelMode
+    ? !currentlyUsingNoRtWorkflow
+    : nextPanelMode === step5PanelMode
+      ? !currentlyUsingStep5Workflow
+      : currentlyUsingNoRtWorkflow || currentlyUsingStep5Workflow;
   const nextActiveFlowId = String(
     options.activeFlowId
     || (typeof latestState !== 'undefined' ? latestState?.activeFlowId : '')
@@ -9347,7 +9365,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     || nextPaymentMethod !== currentPlusPaymentMethod
     || nextSignupMethod !== currentSignupMethod
     || nextPhoneSignupReloginAfterBindEmailEnabled !== currentPhoneSignupReloginAfterBindEmailEnabled
-    || noRtWorkflowModeChanged
+    || specialWorkflowModeChanged
     || paymentTitleChanged;
   if (!shouldRender) {
     return;
@@ -9355,7 +9373,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
 
   rebuildStepDefinitionState(nextPlusModeEnabled, {
     activeFlowId: nextActiveFlowId,
-    ...(useNoRtWorkflow ? { panelMode: nextPanelMode } : {}),
+    ...(useLocalCpaSpecialWorkflow ? { panelMode: nextPanelMode } : {}),
     plusPaymentMethod: nextPaymentMethod,
     signupMethod: nextSignupMethod,
     phoneSignupReloginAfterBindEmailEnabled: nextPhoneSignupReloginAfterBindEmailEnabled,
@@ -12399,6 +12417,9 @@ const hostedSmsPoolManager = window.SidepanelHostedSmsPoolManager?.createHostedS
     btnHostedSmsPoolDeleteAll,
     inputHostedSmsPoolImport,
     btnHostedSmsPoolImport,
+    inputHostedSmsPoolExcelPath,
+    btnHostedSmsPoolExcelBrowse,
+    btnHostedSmsPoolExcelImport,
     hostedSmsPoolSummary,
     inputHostedSmsPoolSearch,
     selectHostedSmsPoolFilter,
@@ -12442,6 +12463,28 @@ const hostedSmsPoolManager = window.SidepanelHostedSmsPoolManager?.createHostedS
         hostedCheckoutVerificationUrl: '',
         hostedCheckoutPhoneNumber: '',
       });
+    },
+    importExcel: async (filePath) => {
+      const response = await sendSidepanelMessage({
+        type: 'IMPORT_HOSTED_SMS_EXCEL',
+        payload: { filePath },
+        source: 'sidepanel',
+      });
+      if (!response?.ok) {
+        throw new Error(response?.error || 'Hosted 接码池 Excel 导入失败。');
+      }
+      return response;
+    },
+    browseExcel: async () => {
+      const response = await sendSidepanelMessage({
+        type: 'BROWSE_HOSTED_SMS_EXCEL',
+        payload: {},
+        source: 'sidepanel',
+      });
+      if (!response?.ok) {
+        throw new Error(response?.error || '选择 Hosted 接码池 Excel 失败。');
+      }
+      return response;
     },
   },
   constants: {
