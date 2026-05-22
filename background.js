@@ -208,6 +208,7 @@ const {
   getHotmailVerificationRequestTimestamp,
   normalizeHotmailServiceMode,
   normalizeHotmailMailApiMessages,
+  parseHotmailImportText,
   pickHotmailAccountForRun,
   pickVerificationMessage,
   pickVerificationMessageWithFallback,
@@ -5064,6 +5065,38 @@ async function browseHostedSmsExcelFile() {
     throw new Error(payload?.error || `打开 Excel 文件选择器失败：HTTP ${response.status}`);
   }
   return payload || { filePath: '' };
+}
+
+async function requestHotmailExcelImport(filePath, options = {}) {
+  const state = await getState();
+  const serviceSettings = getHotmailServiceSettings(state);
+  let response;
+  try {
+    response = await fetch(buildHotmailLocalEndpoint(serviceSettings.localBaseUrl, '/import-hotmail-accounts-excel'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        filePath,
+        sheetName: options?.sheetName || '',
+      }),
+    });
+  } catch (err) {
+    throw new Error(`Hotmail Excel 导入请求失败：${err.message}`);
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    payload = null;
+  }
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `Hotmail Excel 导入失败：HTTP ${response.status}`);
+  }
+  return payload || { accounts: [] };
 }
 
 async function incrementHostedSmsExcelRowForState(state = {}, status = '') {
@@ -13642,7 +13675,9 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   notifyNodeError,
   patchHotmailAccount,
   patchMail2925Account,
+  parseHotmailImportText,
   registerTab,
+  requestHotmailExcelImport,
   requestHostedSmsExcelImport,
   requestStop,
   probeIpProxyExit,

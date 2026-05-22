@@ -23,6 +23,9 @@
   const HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_MS = 5000;
   const HOSTED_CHECKOUT_PAYPAL_DEFAULT_PHONE = '1234567890';
   const HOSTED_CHECKOUT_SUCCESS_URL_PATTERN = /^https:\/\/(?:chatgpt\.com|www\.chatgpt\.com|chat\.openai\.com)\/(?:backend-api\/)?payments\/success(?:[/?#]|$)/i;
+  const PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MIN_SECONDS = 0;
+  const PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MAX_SECONDS = 3600;
+  const PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_DEFAULT_SECONDS = 10;
 
   function createPlusCheckoutCreateExecutor(deps = {}) {
     const {
@@ -127,6 +130,36 @@
         verificationUrl,
         phone,
       };
+    }
+
+    function normalizeHostedCheckoutOauthDelaySeconds(value, fallback = PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_DEFAULT_SECONDS) {
+      const rawValue = String(value ?? '').trim();
+      const fallbackValue = Math.min(
+        PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MAX_SECONDS,
+        Math.max(PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MIN_SECONDS, Math.floor(Number(fallback) || 0))
+      );
+      if (!rawValue) {
+        return fallbackValue;
+      }
+
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) {
+        return fallbackValue;
+      }
+      return Math.min(
+        PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MAX_SECONDS,
+        Math.max(PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MIN_SECONDS, Math.floor(numeric))
+      );
+    }
+
+    async function waitBeforeHostedCheckoutOauthContinuation() {
+      const state = typeof getState === 'function' ? await getState().catch(() => ({})) : {};
+      const delaySeconds = normalizeHostedCheckoutOauthDelaySeconds(state?.plusHostedCheckoutOauthDelaySeconds);
+      if (delaySeconds <= 0) {
+        return;
+      }
+      await addLog(`Step 6: hosted checkout success detected; waiting ${delaySeconds}s before continuing OAuth.`, 'info');
+      await sleepWithStop(delaySeconds * 1000);
     }
 
     async function waitForCheckoutSurface(tabId) {
@@ -661,6 +694,7 @@
       }
       if (isPaymentsSuccessUrl(transitionUrl)) {
         await addLog('步骤 6：hosted checkout 在提交后已直接进入 ChatGPT 支付成功页。', 'ok');
+        await waitBeforeHostedCheckoutOauthContinuation();
         await completeNodeFromBackground('plus-checkout-create', completionPayload);
         return;
       }
@@ -668,6 +702,7 @@
       await addLog('步骤 6：hosted checkout 已跳转到 PayPal，准备继续 guest/card 流自动化。', 'info');
       await runHostedCheckoutPayPalFlow(tabId, guestProfile);
       await addLog('步骤 6：hosted checkout 支付链路已完成，准备进入下一步。', 'ok');
+      await waitBeforeHostedCheckoutOauthContinuation();
       await completeNodeFromBackground('plus-checkout-create', completionPayload);
     }
 

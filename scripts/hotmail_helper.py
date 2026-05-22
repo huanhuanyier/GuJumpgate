@@ -338,6 +338,49 @@ def import_hosted_sms_excel(file_path, sheet_name=""):
     }
 
 
+def is_hotmail_excel_header_row(sheet):
+    header = str(sheet.cell(row=1, column=1).value or "").strip().lower()
+    if header == "mail":
+        return True
+    return header in {"email", "hotmail", "outlook", "account", "账号", "邮箱", "邮件"}
+
+
+def is_hotmail_account_raw_line(value):
+    parts = [str(part or "").strip() for part in str(value or "").split("----")]
+    if len(parts) < 4:
+        return False
+    return bool(parts[0] and "@" in parts[0] and parts[2] and parts[3])
+
+
+def import_hotmail_accounts_excel(file_path, sheet_name=""):
+    openpyxl = require_openpyxl()
+    target_path = resolve_excel_file_path(file_path)
+    workbook = openpyxl.load_workbook(target_path)
+    sheet = workbook[str(sheet_name)] if str(sheet_name or "").strip() else workbook.active
+    start_row = 2 if is_hotmail_excel_header_row(sheet) else 1
+    accounts = []
+
+    for row_number in range(start_row, sheet.max_row + 1):
+        raw_account = str(sheet.cell(row=row_number, column=1).value or "").strip()
+        if not raw_account or not is_hotmail_account_raw_line(raw_account):
+            continue
+        accounts.append({
+            "raw": raw_account,
+            "excelSource": {
+                "filePath": str(target_path),
+                "sheetName": sheet.title,
+                "rowNumber": row_number,
+            },
+        })
+
+    return {
+        "filePath": str(target_path),
+        "sheetName": sheet.title,
+        "count": len(accounts),
+        "accounts": accounts,
+    }
+
+
 def increment_hosted_sms_excel_row(file_path, sheet_name, row_number):
     openpyxl = require_openpyxl()
     target_path = resolve_excel_file_path(file_path)
@@ -1031,6 +1074,17 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
 
             if request_path == "/import-hosted-sms-excel":
                 result = import_hosted_sms_excel(
+                    payload.get("filePath"),
+                    payload.get("sheetName"),
+                )
+                json_response(self, 200, {
+                    "ok": True,
+                    **result,
+                })
+                return
+
+            if request_path == "/import-hotmail-accounts-excel":
+                result = import_hotmail_accounts_excel(
                     payload.get("filePath"),
                     payload.get("sheetName"),
                 )

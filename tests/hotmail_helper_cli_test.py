@@ -53,6 +53,47 @@ class HotmailHelperCliTest(unittest.TestCase):
             self.assertEqual(saved_path, str(target))
             self.assertEqual(target.read_text(encoding="utf-8"), '{"type":"codex"}\n')
 
+    def test_import_hotmail_accounts_excel_reads_first_column_raw_accounts(self):
+        openpyxl = hotmail_helper.require_openpyxl()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "hotmail.xlsx"
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "Accounts"
+            sheet.cell(row=1, column=1).value = "Email"
+            sheet.cell(row=1, column=2).value = "Name"
+            sheet.cell(row=2, column=1).value = "a@outlook.com----pa----client-a----token-a"
+            sheet.cell(row=2, column=2).value = "ignored"
+            sheet.cell(row=3, column=1).value = "b@outlook.com----pb----client-b----token-b"
+            workbook.save(target)
+
+            result = hotmail_helper.import_hotmail_accounts_excel(str(target))
+
+        self.assertEqual(result["filePath"], str(target))
+        self.assertEqual(result["sheetName"], "Accounts")
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(result["accounts"][0]["raw"], "a@outlook.com----pa----client-a----token-a")
+        self.assertEqual(result["accounts"][0]["excelSource"]["rowNumber"], 2)
+
+    def test_import_hotmail_accounts_excel_skips_mail_header_and_invalid_rows(self):
+        openpyxl = hotmail_helper.require_openpyxl()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "hotmail.xlsx"
+            workbook = openpyxl.Workbook()
+            sheet = workbook.active
+            sheet.title = "mail"
+            sheet.cell(row=1, column=1).value = "mail"
+            sheet.cell(row=1, column=2).value = "name"
+            sheet.cell(row=2, column=1).value = "not-an-account"
+            sheet.cell(row=3, column=1).value = "a@outlook.com----pa----client-a----token-a"
+            workbook.save(target)
+
+            result = hotmail_helper.import_hotmail_accounts_excel(str(target))
+
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["accounts"][0]["raw"], "a@outlook.com----pa----client-a----token-a")
+        self.assertEqual(result["accounts"][0]["excelSource"]["rowNumber"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

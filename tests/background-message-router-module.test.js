@@ -93,6 +93,62 @@ test('message router module exposes a factory', () => {
   assert.equal(typeof api?.createMessageRouter, 'function');
 });
 
+test('IMPORT_HOTMAIL_EXCEL reads local helper rows into the Hotmail account pool', async () => {
+  const source = fs.readFileSync('background/message-router.js', 'utf8');
+  const globalScope = { console };
+  const api = new Function('self', `${source}; return self.MultiPageBackgroundMessageRouter;`)(globalScope);
+  let accounts = [];
+
+  const normalizeAccounts = (list) => (Array.isArray(list) ? list : []).map((account) => ({
+    id: account.id || account.email,
+    email: String(account.email || '').trim(),
+    password: String(account.password || ''),
+    clientId: String(account.clientId || '').trim(),
+    refreshToken: String(account.refreshToken || ''),
+  }));
+
+  const router = api.createMessageRouter({
+    addLog: async () => {},
+    getState: async () => ({ hotmailAccounts: accounts }),
+    normalizeHotmailAccounts: normalizeAccounts,
+    parseHotmailImportText: (text) => {
+      const [email, password, clientId, refreshToken] = String(text || '').split('----');
+      return email && refreshToken
+        ? [{ email, password, clientId, refreshToken }]
+        : [];
+    },
+    requestHotmailExcelImport: async (filePath) => ({
+      filePath,
+      sheetName: 'Sheet1',
+      accounts: [
+        { raw: 'a@outlook.com----pa----client-a----token-a' },
+        { raw: 'b@outlook.com----pb----client-b----token-b' },
+      ],
+    }),
+    upsertHotmailAccount: async (account) => {
+      const existingIndex = accounts.findIndex((item) => item.email.toLowerCase() === String(account.email || '').toLowerCase());
+      const nextAccount = { id: account.email, ...account };
+      if (existingIndex >= 0) {
+        accounts[existingIndex] = nextAccount;
+      } else {
+        accounts.push(nextAccount);
+      }
+      return nextAccount;
+    },
+  });
+
+  const response = await router.handleMessage({
+    type: 'IMPORT_HOTMAIL_EXCEL',
+    payload: { filePath: 'D:\\accounts.xlsx' },
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.importedCount, 2);
+  assert.equal(response.updatedCount, 0);
+  assert.deepEqual(response.accounts.map((account) => account.email), ['a@outlook.com', 'b@outlook.com']);
+  assert.deepEqual(accounts.map((account) => account.refreshToken), ['token-a', 'token-b']);
+});
+
 test('SAVE_SETTING broadcasts free phone reuse setting updates for realtime sidepanel sync', async () => {
   const source = fs.readFileSync('background/message-router.js', 'utf8');
   const globalScope = { console };

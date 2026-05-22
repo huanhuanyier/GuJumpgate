@@ -607,3 +607,21 @@ alice@hotmail.com----pass-2----client-2----refresh-token-2
     },
   ]);
 });
+
+test('parseHotmailImportText skips headers and incomplete account rows', () => {
+  const parsed = parseHotmailImportText(`
+mail
+not-an-account
+missing-token@outlook.com----pass----client----
+valid@outlook.com----pass----client----refresh-token
+  `.trim());
+
+  assert.deepEqual(parsed, [
+    {
+      email: 'valid@outlook.com',
+      password: 'pass',
+      clientId: 'client',
+      refreshToken: 'refresh-token',
+    },
+  ]);
+});

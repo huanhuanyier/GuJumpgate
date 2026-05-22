@@ -433,6 +433,57 @@
       }
     }
 
+    async function handleImportHotmailExcel() {
+      if (actionInFlight) return;
+
+      actionInFlight = true;
+      if (dom.btnImportHotmailExcel) {
+        dom.btnImportHotmailExcel.disabled = true;
+      }
+
+      try {
+        const browseResponse = await runtime.sendMessage({
+          type: 'BROWSE_HOTMAIL_EXCEL',
+          source: 'sidepanel',
+          payload: {},
+        });
+        if (!browseResponse?.ok) {
+          throw new Error(browseResponse?.error || '选择 Hotmail Excel 失败。');
+        }
+        const filePath = String(browseResponse.filePath || '').trim();
+        if (!filePath) {
+          helpers.showToast('未选择 Hotmail Excel 文件。', 'warn');
+          return;
+        }
+
+        const importResponse = await runtime.sendMessage({
+          type: 'IMPORT_HOTMAIL_EXCEL',
+          source: 'sidepanel',
+          payload: { filePath },
+        });
+        if (!importResponse?.ok) {
+          throw new Error(importResponse?.error || 'Hotmail Excel 导入失败。');
+        }
+
+        if (Array.isArray(importResponse.accounts)) {
+          state.syncLatestState({ hotmailAccounts: importResponse.accounts });
+          refreshHotmailSelectionUI();
+        }
+        helpers.showToast(
+          `Hotmail Excel 导入完成：新增 ${importResponse.importedCount || 0} 条，更新 ${importResponse.updatedCount || 0} 条`,
+          'success',
+          2600
+        );
+      } catch (err) {
+        helpers.showToast(err?.message || 'Hotmail Excel 导入失败。', 'error');
+      } finally {
+        actionInFlight = false;
+        if (dom.btnImportHotmailExcel) {
+          dom.btnImportHotmailExcel.disabled = false;
+        }
+      }
+    }
+
     async function handleAccountListClick(event) {
       const actionButton = event.target.closest('[data-account-action]');
       if (!actionButton || actionInFlight) {
@@ -583,6 +634,7 @@
 
       dom.btnAddHotmailAccount?.addEventListener('click', handleAddHotmailAccount);
       dom.btnImportHotmailAccounts?.addEventListener('click', handleImportHotmailAccounts);
+      dom.btnImportHotmailExcel?.addEventListener('click', handleImportHotmailExcel);
       dom.inputHotmailSearch?.addEventListener('input', (event) => {
         searchTerm = normalizeSearchText(event.target.value);
         renderHotmailAccounts();

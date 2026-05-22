@@ -412,6 +412,9 @@ test('hosted checkout automation completes plus-checkout-create after success pa
       events.push({ type: 'complete', step, payload });
     },
     enableHostedCheckoutAutomation: true,
+    getState: async () => ({
+      plusHostedCheckoutOauthDelaySeconds: 300,
+    }),
     ensureContentScriptReadyOnTabUntilStopped: async () => {},
     fetch: async () => ({
       ok: true,
@@ -438,7 +441,9 @@ test('hosted checkout automation completes plus-checkout-create after success pa
       return {};
     },
     setState: async () => {},
-    sleepWithStop: async () => {},
+    sleepWithStop: async (ms) => {
+      events.push({ type: 'sleep', ms });
+    },
     waitForTabCompleteUntilStopped: async () => {},
     waitForTabUrlMatchUntilStopped: async (_tabId, matcher) => {
       const successTab = { id: 79, url: 'https://chatgpt.com/payments/success' };
@@ -455,6 +460,10 @@ test('hosted checkout automation completes plus-checkout-create after success pa
   });
   await new Promise((resolve) => setImmediate(resolve));
 
+  const delayIndex = events.findIndex((event) => event.type === 'sleep' && event.ms === 300000);
+  const completeIndex = events.findIndex((event) => event.type === 'complete');
+  assert.ok(delayIndex >= 0);
+  assert.ok(completeIndex > delayIndex);
   assert.deepStrictEqual(events.find((event) => event.type === 'complete'), {
     type: 'complete',
     step: 'plus-checkout-create',

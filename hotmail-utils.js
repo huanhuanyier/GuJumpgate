@@ -579,7 +579,7 @@
     return lines
       .filter((line, index) => !(index === 0 && /^账号----密码----ID----Token$/i.test(line)))
       .map((line) => line.split('----').map((part) => part.trim()))
-      .filter((parts) => parts.length >= 4 && parts[0] && parts[2])
+      .filter((parts) => parts.length >= 4 && parts[0] && parts[0].includes('@') && parts[2] && parts[3])
       .map(([email, password, clientId, refreshToken]) => ({
         email,
         password,

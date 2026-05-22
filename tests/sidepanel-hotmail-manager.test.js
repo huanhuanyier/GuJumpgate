@@ -61,6 +61,7 @@ test('sidepanel loads hotmail manager before sidepanel bootstrap', () => {
 test('sidepanel html contains collapsible hotmail form controls', () => {
   const html = fs.readFileSync('sidepanel/sidepanel.html', 'utf8');
   assert.match(html, /id="btn-toggle-hotmail-form"/);
+  assert.match(html, /id="btn-import-hotmail-excel"/);
   assert.match(html, /id="hotmail-form-shell"/);
   assert.match(html, /id="btn-import-hotmail-accounts"[^>]*>批量导入</);
 });
@@ -327,4 +328,111 @@ test('hotmail manager hides form after save succeeds', async () => {
   assert.equal(inputHotmailPassword.value, '');
   assert.equal(inputHotmailRefreshToken.value, '');
   assert.match(toastMessages.at(-1) || '', /已保存 Hotmail 账号/);
+});
+
+test('hotmail manager imports accounts from selected Excel file', async () => {
+  const source = fs.readFileSync('sidepanel/hotmail-manager.js', 'utf8');
+  const windowObject = {
+    SidepanelAccountPoolUi: createAccountPoolUiStub(),
+  };
+  const localStorageMock = {
+    getItem() {
+      return null;
+    },
+    setItem() {},
+  };
+
+  const api = new Function('window', 'localStorage', `${source}; return window.SidepanelHotmailManager;`)(
+    windowObject,
+    localStorageMock
+  );
+
+  const handlers = {};
+  const toastMessages = [];
+  const runtimeMessages = [];
+  let latestState = { currentHotmailAccountId: null, hotmailAccounts: [] };
+
+  const manager = api.createHotmailManager({
+    state: {
+      getLatestState: () => latestState,
+      syncLatestState(updates) {
+        latestState = {
+          ...latestState,
+          ...(updates || {}),
+        };
+      },
+    },
+    dom: {
+      btnAddHotmailAccount: { disabled: false, addEventListener() {} },
+      btnClearUsedHotmailAccounts: { textContent: '', disabled: false, addEventListener() {} },
+      btnDeleteAllHotmailAccounts: { textContent: '', disabled: false, addEventListener() {} },
+      btnHotmailUsageGuide: { addEventListener() {} },
+      btnImportHotmailAccounts: { disabled: false, addEventListener() {} },
+      btnImportHotmailExcel: {
+        disabled: false,
+        addEventListener(type, handler) {
+          if (type === 'click') handlers.importExcel = handler;
+        },
+      },
+      btnToggleHotmailForm: { textContent: '', setAttribute() {}, addEventListener() {} },
+      btnToggleHotmailList: { textContent: '', disabled: false, setAttribute() {}, addEventListener() {} },
+      hotmailAccountsList: { innerHTML: '', addEventListener() {} },
+      hotmailFormShell: { hidden: true },
+      hotmailListShell: { classList: { toggle() {} } },
+      inputEmail: { value: '' },
+      inputHotmailClientId: { value: '' },
+      inputHotmailEmail: { value: '', focus() {} },
+      inputHotmailImport: { value: '' },
+      inputHotmailPassword: { value: '' },
+      inputHotmailRefreshToken: { value: '' },
+      selectMailProvider: { value: 'hotmail-api' },
+    },
+    helpers: {
+      getHotmailAccounts: () => latestState.hotmailAccounts,
+      getCurrentHotmailEmail: () => '',
+      escapeHtml: (value) => String(value || ''),
+      showToast(message) {
+        toastMessages.push(message);
+      },
+      openConfirmModal: async () => true,
+      copyTextToClipboard: async () => {},
+    },
+    runtime: {
+      sendMessage: async (message) => {
+        runtimeMessages.push(message);
+        if (message.type === 'BROWSE_HOTMAIL_EXCEL') {
+          return { ok: true, filePath: 'D:\\accounts.xlsx' };
+        }
+        if (message.type === 'IMPORT_HOTMAIL_EXCEL') {
+          return {
+            ok: true,
+            importedCount: 2,
+            updatedCount: 0,
+            accounts: [
+              { id: 'a', email: 'a@outlook.com' },
+              { id: 'b', email: 'b@outlook.com' },
+            ],
+          };
+        }
+        return { ok: true };
+      },
+    },
+    constants: {
+      copyIcon: '',
+      displayTimeZone: 'Asia/Shanghai',
+      expandedStorageKey: 'multipage-hotmail-list-expanded',
+    },
+    hotmailUtils: {},
+  });
+
+  manager.bindHotmailEvents();
+  await handlers.importExcel();
+
+  assert.deepEqual(runtimeMessages.map((message) => message.type), [
+    'BROWSE_HOTMAIL_EXCEL',
+    'IMPORT_HOTMAIL_EXCEL',
+  ]);
+  assert.deepEqual(runtimeMessages[1].payload, { filePath: 'D:\\accounts.xlsx' });
+  assert.equal(latestState.hotmailAccounts.length, 2);
+  assert.match(toastMessages.at(-1) || '', /Hotmail Excel/);
 });
