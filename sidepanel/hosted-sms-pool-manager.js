@@ -115,11 +115,19 @@
         const usage = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
         const legacyUsedCount = Number(usage.usedAt) > 0 ? 1 : 0;
         const useCount = Math.max(0, Math.floor(Number(usage.useCount ?? usage.usageCount ?? legacyUsedCount) || 0));
+        const excelSource = usage.excelSource && typeof usage.excelSource === 'object'
+          ? {
+            filePath: normalizeText(usage.excelSource.filePath),
+            sheetName: normalizeText(usage.excelSource.sheetName),
+            rowNumber: Math.max(0, Math.floor(Number(usage.excelSource.rowNumber) || 0)),
+          }
+          : null;
         return [normalizeText(key), {
           useCount,
           usedAt: Math.max(0, Number(usage.usedAt) || 0),
           lastAttemptAt: Math.max(0, Number(usage.lastAttemptAt) || 0),
           lastError: normalizeText(usage.lastError),
+          ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
         }];
       }).filter(([key]) => Boolean(key)));
     }
@@ -180,11 +188,16 @@
         dom.btnHostedSmsPoolClearUsed,
         dom.btnHostedSmsPoolDeleteAll,
         dom.btnHostedSmsPoolImport,
+        dom.btnHostedSmsPoolExcelBrowse,
+        dom.btnHostedSmsPoolExcelImport,
       ].forEach((button) => {
         if (button) button.disabled = loading;
       });
       if (dom.inputHostedSmsPoolImport) {
         dom.inputHostedSmsPoolImport.disabled = loading;
+      }
+      if (dom.inputHostedSmsPoolExcelPath) {
+        dom.inputHostedSmsPoolExcelPath.disabled = loading;
       }
       if (summary && dom.hostedSmsPoolSummary) {
         dom.hostedSmsPoolSummary.textContent = summary;
@@ -389,6 +402,106 @@
       );
     }
 
+    async function importExcelEntries() {
+      const filePath = normalizeText(dom.inputHostedSmsPoolExcelPath?.value || '');
+      if (!filePath) {
+        helpers.showToast?.('请先填写 Hosted 接码池 Excel 文件完整路径。', 'warn');
+        return;
+      }
+      if (typeof actions.importExcel !== 'function') {
+        helpers.showToast?.('当前版本未接入 Hosted 接码池 Excel 导入。', 'error');
+        return;
+      }
+
+      setLoading(true, '正在读取 Hosted 接码池 Excel...');
+      try {
+        const result = await actions.importExcel(filePath);
+        const excelEntries = Array.isArray(result?.entries) ? result.entries : [];
+        if (!excelEntries.length) {
+          helpers.showToast?.('Excel 中没有识别到有效的 Hosted 接码数据。', 'warn');
+          return;
+        }
+
+        let importedCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+        const persisted = await patchPool(({ entries, usage }) => {
+          const knownKeys = new Set(entries.map((entry) => entry.key));
+          const nextEntries = [...entries];
+          const nextUsage = { ...usage };
+          for (const rawEntry of excelEntries) {
+            const phone = normalizePoolPhone(rawEntry.phone);
+            const verificationUrl = normalizePoolUrl(rawEntry.verificationUrl || rawEntry.link || rawEntry.url);
+            const key = buildKey(phone, verificationUrl);
+            if (!phone || !verificationUrl || !key) {
+              skippedCount += 1;
+              continue;
+            }
+            if (!knownKeys.has(key)) {
+              knownKeys.add(key);
+              nextEntries.push({ key, phone, verificationUrl });
+              importedCount += 1;
+            } else {
+              updatedCount += 1;
+            }
+            const successCount = Math.max(0, Math.floor(Number(rawEntry.successCount ?? rawEntry.useCount) || 0));
+            const excelSource = rawEntry.excelSource && typeof rawEntry.excelSource === 'object'
+              ? {
+                filePath: normalizeText(rawEntry.excelSource.filePath || result.filePath || filePath),
+                sheetName: normalizeText(rawEntry.excelSource.sheetName || result.sheetName || ''),
+                rowNumber: Math.max(0, Math.floor(Number(rawEntry.excelSource.rowNumber) || 0)),
+              }
+              : null;
+            nextUsage[key] = {
+              ...(nextUsage[key] || {}),
+              useCount: successCount,
+              usedAt: Math.max(0, Number(nextUsage[key]?.usedAt) || 0),
+              lastAttemptAt: Math.max(0, Number(nextUsage[key]?.lastAttemptAt) || 0),
+              lastError: normalizeText(nextUsage[key]?.lastError),
+              ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
+            };
+          }
+          return { entries: nextEntries, usage: nextUsage };
+        });
+        if (!persisted) {
+          return;
+        }
+        helpers.showToast?.(
+          `Hosted 接码池 Excel 已导入 ${importedCount} 个号码，更新 ${updatedCount} 个，跳过 ${skippedCount} 条。`,
+          'success',
+          2600
+        );
+      } catch (error) {
+        helpers.showToast?.(`Hosted 接码池 Excel 导入失败：${error.message}`, 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    async function browseExcelFile() {
+      if (typeof actions.browseExcel !== 'function') {
+        helpers.showToast?.('当前版本未接入 Hosted 接码池 Excel 选择。', 'error');
+        return;
+      }
+      setLoading(true, '正在打开 Excel 文件选择器...');
+      try {
+        const result = await actions.browseExcel();
+        const filePath = normalizeText(result?.filePath || '');
+        if (!filePath) {
+          helpers.showToast?.('未选择 Excel 文件。', 'warn');
+          return;
+        }
+        if (dom.inputHostedSmsPoolExcelPath) {
+          dom.inputHostedSmsPoolExcelPath.value = filePath;
+        }
+        await importExcelEntries();
+      } catch (error) {
+        helpers.showToast?.(`选择 Hosted 接码池 Excel 失败：${error.message}`, 'error');
+      } finally {
+        setLoading(false);
+      }
+    }
+
     async function clearUsedState() {
       const confirmed = await helpers.openConfirmModal?.({
         title: '清空使用次数',
@@ -433,6 +546,12 @@
       dom.btnHostedSmsPoolRefresh?.addEventListener('click', () => refresh());
       dom.btnHostedSmsPoolImport?.addEventListener('click', () => {
         void importEntries();
+      });
+      dom.btnHostedSmsPoolExcelImport?.addEventListener('click', () => {
+        void importExcelEntries();
+      });
+      dom.btnHostedSmsPoolExcelBrowse?.addEventListener('click', () => {
+        void browseExcelFile();
       });
       dom.inputHostedSmsPoolImport?.addEventListener('keydown', (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {

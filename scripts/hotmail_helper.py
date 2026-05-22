@@ -159,6 +159,201 @@ def compact_text(value, limit=400):
 def log_info(message):
     print(f"[HotmailHelper] {message}", flush=True)
 
+
+def require_openpyxl():
+    try:
+        import openpyxl
+    except ImportError as exc:
+        raise RuntimeError("openpyxl is required to read/write Excel files. Please install it first.") from exc
+    return openpyxl
+
+
+def resolve_excel_file_path(file_path):
+    target_path = Path(str(file_path or "").strip().strip('"')).expanduser()
+    if not str(target_path):
+        raise RuntimeError("Missing filePath")
+    if not target_path.is_absolute():
+        raise RuntimeError("filePath must be absolute")
+    if not target_path.exists():
+        raise RuntimeError(f"Excel file not found: {target_path}")
+    if target_path.suffix.lower() not in {".xlsx", ".xlsm"}:
+        raise RuntimeError("Only .xlsx and .xlsm Excel files are supported")
+    return target_path
+
+
+def browse_excel_file():
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise RuntimeError("Unable to open file picker on this system") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        file_path = filedialog.askopenfilename(
+            title="选择 Excel 文件",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xlsm"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+    return {"filePath": str(file_path or "").strip()}
+
+
+def is_hotmail_account_raw_line(value):
+    parts = str(value or "").strip().split("----")
+    if len(parts) < 4:
+        return False
+    return bool(parts[0] and "@" in parts[0] and parts[2] and parts[3])
+
+
+def is_hotmail_excel_header_row(sheet):
+    first_value = str(sheet.cell(row=1, column=1).value or "").strip().lower()
+    return first_value in {"mail", "email", "邮箱", "账号"}
+
+
+def import_hotmail_accounts_excel(file_path, sheet_name=""):
+    openpyxl = require_openpyxl()
+    target_path = resolve_excel_file_path(file_path)
+    workbook = openpyxl.load_workbook(target_path)
+    sheet = workbook[str(sheet_name)] if str(sheet_name or "").strip() else workbook.active
+    start_row = 2 if is_hotmail_excel_header_row(sheet) else 1
+    accounts = []
+
+    for row_number in range(start_row, sheet.max_row + 1):
+        raw_account = str(sheet.cell(row=row_number, column=1).value or "").strip()
+        if not raw_account or not is_hotmail_account_raw_line(raw_account):
+            continue
+        accounts.append({
+            "raw": raw_account,
+            "excelSource": {
+                "filePath": str(target_path),
+                "sheetName": sheet.title,
+                "rowNumber": row_number,
+            },
+        })
+
+    return {
+        "filePath": str(target_path),
+        "sheetName": sheet.title,
+        "importedCount": len(accounts),
+        "accounts": accounts,
+    }
+
+
+def is_hosted_sms_excel_header_row(sheet):
+    header_values = [
+        str(sheet.cell(row=1, column=column).value or "").strip().lower()
+        for column in range(1, 4)
+    ]
+    if not any(header_values):
+        return False
+    first, second, third = header_values
+    return (
+        first in {"phone", "手机号", "手机", "号码", "电话"}
+        or second in {"link", "url", "接码链接", "验证码接口", "接口"}
+        or third in {"success", "成功", "成功次数", "开通次数"}
+    )
+
+
+def normalize_hosted_sms_success_count(value):
+    try:
+        return max(0, int(float(str(value or "0").strip() or "0")))
+    except (TypeError, ValueError):
+        return 0
+
+
+def import_hosted_sms_excel(file_path, sheet_name=""):
+    openpyxl = require_openpyxl()
+    target_path = resolve_excel_file_path(file_path)
+    workbook = openpyxl.load_workbook(target_path)
+    sheet = workbook[str(sheet_name)] if str(sheet_name or "").strip() else workbook.active
+    start_row = 2 if is_hosted_sms_excel_header_row(sheet) else 1
+    entries = []
+
+    for row_number in range(start_row, sheet.max_row + 1):
+        phone = str(sheet.cell(row=row_number, column=1).value or "").strip()
+        verification_url = str(sheet.cell(row=row_number, column=2).value or "").strip()
+        if not phone or not verification_url:
+            continue
+        entries.append({
+            "phone": phone,
+            "verificationUrl": verification_url,
+            "successCount": normalize_hosted_sms_success_count(sheet.cell(row=row_number, column=3).value),
+            "excelSource": {
+                "filePath": str(target_path),
+                "sheetName": sheet.title,
+                "rowNumber": row_number,
+            },
+        })
+
+    return {
+        "filePath": str(target_path),
+        "sheetName": sheet.title,
+        "entries": entries,
+    }
+
+
+def increment_hosted_sms_excel_row(file_path, sheet_name, row_number):
+    openpyxl = require_openpyxl()
+    target_path = resolve_excel_file_path(file_path)
+    try:
+        normalized_row_number = int(row_number)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("rowNumber must be a positive integer") from exc
+    if normalized_row_number < 1:
+        raise RuntimeError("rowNumber must be a positive integer")
+
+    workbook = openpyxl.load_workbook(target_path)
+    normalized_sheet_name = str(sheet_name or "").strip()
+    sheet = workbook[normalized_sheet_name] if normalized_sheet_name else workbook.active
+    next_count = normalize_hosted_sms_success_count(sheet.cell(row=normalized_row_number, column=3).value) + 1
+    sheet.cell(row=normalized_row_number, column=3).value = next_count
+    workbook.save(target_path)
+    return {
+        "ok": True,
+        "filePath": str(target_path),
+        "sheetName": sheet.title,
+        "rowNumber": normalized_row_number,
+        "successCount": next_count,
+    }
+
+
+def update_hotmail_account_excel_row(file_path, sheet_name, row_number, name="", card="", phone="", pass_status=""):
+    openpyxl = require_openpyxl()
+    target_path = resolve_excel_file_path(file_path)
+    try:
+        normalized_row_number = int(row_number)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("rowNumber must be a positive integer") from exc
+    if normalized_row_number < 1:
+        raise RuntimeError("rowNumber must be a positive integer")
+
+    workbook = openpyxl.load_workbook(target_path)
+    normalized_sheet_name = str(sheet_name or "").strip()
+    sheet = workbook[normalized_sheet_name] if normalized_sheet_name else workbook.active
+    updates = [
+        (2, name),
+        (3, card),
+        (4, phone),
+        (5, pass_status),
+    ]
+    for column, value in updates:
+        if value is not None and str(value).strip():
+            sheet.cell(row=normalized_row_number, column=column).value = str(value).strip()
+    workbook.save(target_path)
+    return {
+        "ok": True,
+        "filePath": str(target_path),
+        "sheetName": sheet.title,
+        "rowNumber": normalized_row_number,
+    }
+
+
 def get_message_body_content(message):
     body = message.get("body") or {}
     if not isinstance(body, dict):
@@ -895,6 +1090,58 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "filePath": file_path,
                 })
+                return
+
+            if request_path == "/browse-excel-file":
+                result = browse_excel_file()
+                json_response(self, 200, {
+                    "ok": True,
+                    **result,
+                })
+                return
+
+            if request_path == "/import-hotmail-accounts-excel":
+                result = import_hotmail_accounts_excel(
+                    payload.get("filePath"),
+                    payload.get("sheetName"),
+                )
+                json_response(self, 200, {
+                    "ok": True,
+                    **result,
+                })
+                return
+
+            if request_path == "/import-hosted-sms-excel":
+                result = import_hosted_sms_excel(
+                    payload.get("filePath"),
+                    payload.get("sheetName"),
+                )
+                json_response(self, 200, {
+                    "ok": True,
+                    **result,
+                })
+                return
+
+            if request_path == "/increment-hosted-sms-excel-row":
+                result = increment_hosted_sms_excel_row(
+                    payload.get("filePath"),
+                    payload.get("sheetName"),
+                    payload.get("rowNumber"),
+                )
+                json_response(self, 200, result)
+                return
+
+            if request_path == "/update-hotmail-account-excel-row":
+                result = update_hotmail_account_excel_row(
+                    payload.get("filePath"),
+                    payload.get("sheetName"),
+                    payload.get("rowNumber"),
+                    payload.get("name"),
+                    payload.get("card"),
+                    payload.get("phone"),
+                    payload.get("passStatus"),
+                )
+                json_response(self, 200, result)
                 return
 
             email_addr = str(payload.get("email") or "").strip()

@@ -147,8 +147,12 @@
       notifyNodeError,
       patchMail2925Account,
       patchHotmailAccount,
+      parseHotmailImportText = null,
+      browseExcelFile = null,
       pollContributionStatus,
       registerTab,
+      requestHotmailExcelImport = null,
+      requestHostedSmsExcelImport = null,
       requestStop,
       probeIpProxyExit,
       handleCloudflareSecurityBlocked,
@@ -1686,6 +1690,88 @@
             message.payload?.updates || {}
           );
           return { ok: true, account };
+        }
+
+        case 'IMPORT_HOTMAIL_EXCEL': {
+          if (typeof requestHotmailExcelImport !== 'function') {
+            throw new Error('当前版本未接入 Hotmail Excel 导入。');
+          }
+          if (typeof parseHotmailImportText !== 'function') {
+            throw new Error('当前版本未加载 Hotmail 导入解析器。');
+          }
+          const filePath = String(message.payload?.filePath || '').trim();
+          if (!filePath) {
+            throw new Error('请先选择 Hotmail Excel 文件。');
+          }
+          const result = await requestHotmailExcelImport(filePath, message.payload || {});
+          let importedCount = 0;
+          let updatedCount = 0;
+          let accounts = normalizeHotmailAccounts((await getState())?.hotmailAccounts);
+
+          for (const rawItem of result.accounts || []) {
+            const rawText = String(rawItem?.raw || rawItem?.email || '').trim();
+            const parsed = parseHotmailImportText(rawText)[0];
+            if (!parsed) {
+              continue;
+            }
+            const normalizedEmail = String(parsed.email || '').trim().toLowerCase();
+            const existing = accounts.find((account) => String(account.email || '').trim().toLowerCase() === normalizedEmail);
+            const nextAccount = {
+              ...(existing || {}),
+              ...parsed,
+              excelSource: rawItem.excelSource || {
+                filePath: result.filePath || filePath,
+                sheetName: result.sheetName || '',
+                rowNumber: rawItem.rowNumber || 0,
+              },
+            };
+            const saved = await upsertHotmailAccount(nextAccount);
+            accounts = normalizeHotmailAccounts((await getState())?.hotmailAccounts);
+            if (existing) {
+              updatedCount += 1;
+            } else if (saved?.id) {
+              importedCount += 1;
+            }
+          }
+
+          await addLog?.(`Hotmail Excel 已读取：新增 ${importedCount} 条，更新 ${updatedCount} 条。`, 'ok');
+          return {
+            ok: true,
+            importedCount,
+            updatedCount,
+            accounts,
+            filePath: result.filePath || filePath,
+            sheetName: result.sheetName || '',
+          };
+        }
+
+        case 'IMPORT_HOSTED_SMS_EXCEL': {
+          if (typeof requestHostedSmsExcelImport !== 'function') {
+            throw new Error('当前版本未接入 Hosted 接码池 Excel 导入。');
+          }
+          const filePath = String(message.payload?.filePath || '').trim();
+          if (!filePath) {
+            throw new Error('请先填写 Excel 文件完整路径。');
+          }
+          const result = await requestHostedSmsExcelImport(filePath, message.payload || {});
+          return {
+            ok: true,
+            entries: result.entries || [],
+            filePath: result.filePath || filePath,
+            sheetName: result.sheetName || '',
+          };
+        }
+
+        case 'BROWSE_HOTMAIL_EXCEL':
+        case 'BROWSE_HOSTED_SMS_EXCEL': {
+          if (typeof browseExcelFile !== 'function') {
+            throw new Error('当前版本未接入 Excel 文件选择。');
+          }
+          const result = await browseExcelFile();
+          return {
+            ok: true,
+            filePath: result.filePath || '',
+          };
         }
 
         case 'VERIFY_HOTMAIL_ACCOUNT':

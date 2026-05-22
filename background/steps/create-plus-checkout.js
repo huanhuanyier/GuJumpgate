@@ -132,6 +132,27 @@
       return HOSTED_CHECKOUT_SUCCESS_URL_PATTERN.test(String(url || ''));
     }
 
+    function normalizePlusHostedCheckoutOauthDelaySeconds(value = 0) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        return 0;
+      }
+      return Math.min(3600, Math.max(0, Math.floor(numeric)));
+    }
+
+    async function waitBeforeHostedCheckoutOauth() {
+      const latestState = typeof getState === 'function' ? await getState() : {};
+      const delaySeconds = normalizePlusHostedCheckoutOauthDelaySeconds(
+        latestState?.plusHostedCheckoutOauthDelaySeconds
+      );
+      if (delaySeconds > 0) {
+        await addLog(`步骤 6：已按设置等待 ${delaySeconds} 秒，之后再进入 OAuth 登录。`, 'info');
+        await sleepWithStop(delaySeconds * 1000);
+      }
+      throwIfStopped();
+      return delaySeconds;
+    }
+
     function isPayPalUrl(url = '') {
       return /paypal\./i.test(String(url || ''));
     }
@@ -757,11 +778,19 @@ function FindProxyForURL(url, host) {
         const usage = item && typeof item === 'object' && !Array.isArray(item) ? item : {};
         const legacyUsedCount = Number(usage.usedAt) > 0 ? 1 : 0;
         const useCount = Math.max(0, Math.floor(Number(usage.useCount ?? usage.usageCount ?? legacyUsedCount) || 0));
+        const excelSource = usage.excelSource && typeof usage.excelSource === 'object' && !Array.isArray(usage.excelSource)
+          ? {
+            filePath: String(usage.excelSource.filePath || '').trim(),
+            sheetName: String(usage.excelSource.sheetName || '').trim(),
+            rowNumber: Math.max(0, Math.floor(Number(usage.excelSource.rowNumber) || 0)),
+          }
+          : null;
         return [String(key || '').trim(), {
           useCount,
           usedAt: Math.max(0, Number(usage.usedAt) || 0),
           lastAttemptAt: Math.max(0, Number(usage.lastAttemptAt) || 0),
           lastError: String(usage.lastError || '').trim(),
+          ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
         }];
       }).filter(([key]) => Boolean(key)));
     }
@@ -781,7 +810,10 @@ function FindProxyForURL(url, host) {
         ? entries.find((candidate) => candidate.key === key)
         : null;
       if (matchedEntry) {
-        return { ...matchedEntry };
+        return {
+          ...matchedEntry,
+          ...(entry.excelSource ? { excelSource: entry.excelSource } : {}),
+        };
       }
       const phone = normalizeHostedCheckoutPoolPhone(entry.phone);
       const verificationUrl = normalizeHostedCheckoutPoolUrl(entry.verificationUrl);
@@ -792,6 +824,7 @@ function FindProxyForURL(url, host) {
         key,
         phone,
         verificationUrl,
+        ...(entry.excelSource ? { excelSource: entry.excelSource } : {}),
       };
     }
 
@@ -808,6 +841,7 @@ function FindProxyForURL(url, host) {
             index: Number.isFinite(entry.index) ? entry.index : index,
             useCount: Math.max(0, Math.floor(Number(itemUsage.useCount) || 0)),
             usedAt: Math.max(0, Number(itemUsage.usedAt) || 0),
+            excelSource: entry.excelSource || itemUsage.excelSource || null,
           };
         })
         .sort((left, right) => {
@@ -880,6 +914,7 @@ function FindProxyForURL(url, host) {
             : Math.max(0, Number(previous.usedAt) || 0),
           lastAttemptAt: now,
           lastError: success ? '' : String(options.error || '').trim(),
+          ...(normalizedEntry.excelSource || previous.excelSource ? { excelSource: normalizedEntry.excelSource || previous.excelSource } : {}),
         },
       };
       await applyHostedCheckoutRuntimePatch({
@@ -1533,6 +1568,19 @@ function FindProxyForURL(url, host) {
       await addLog(`步骤 6：hosted checkout 初始电话配置为 ${runtimeConfig.phone || '(空)'}。`, 'info');
       await addLog(`步骤 6：hosted checkout 地址数据：${JSON.stringify(address)}`, 'info');
       const guestProfile = buildHostedCheckoutGuestProfile(address, runtimeConfig);
+      await applyHostedCheckoutRuntimePatch({
+        plusHostedCheckoutGuestProfile: {
+          email: guestProfile.email,
+          password: guestProfile.password,
+          phone: guestProfile.phone,
+          firstName: guestProfile.firstName,
+          lastName: guestProfile.lastName,
+          fullName: guestProfile.fullName,
+          cardNumber: guestProfile.cardNumber,
+          cardExpiry: guestProfile.cardExpiry,
+          cardCvv: guestProfile.cardCvv,
+        },
+      });
       await runHostedCheckoutOpenAiFlow(tabId, guestProfile);
 
       const transitionTab = await waitForUrlMatch(
@@ -1547,6 +1595,7 @@ function FindProxyForURL(url, host) {
       }
       if (isPaymentsSuccessUrl(transitionUrl)) {
         await addLog('步骤 6：hosted checkout 在提交后已直接进入 ChatGPT 支付成功页。', 'ok');
+        await waitBeforeHostedCheckoutOauth();
         await completeNodeFromBackground('plus-checkout-create', completionPayload);
         return;
       }
@@ -1554,6 +1603,7 @@ function FindProxyForURL(url, host) {
       await addLog('步骤 6：hosted checkout 已跳转到 PayPal，准备继续 guest/card 流自动化。', 'info');
       await runHostedCheckoutPayPalFlow(tabId, guestProfile);
       await addLog('步骤 6：hosted checkout 支付链路已完成，准备进入下一步。', 'ok');
+      await waitBeforeHostedCheckoutOauth();
       await completeNodeFromBackground('plus-checkout-create', completionPayload);
     }
 

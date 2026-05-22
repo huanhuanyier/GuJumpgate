@@ -249,6 +249,7 @@ const {
   getHotmailVerificationRequestTimestamp,
   normalizeHotmailServiceMode,
   normalizeHotmailMailApiMessages,
+  parseHotmailImportText,
   pickHotmailAccountForRun,
   pickVerificationMessage,
   pickVerificationMessageWithFallback,
@@ -3061,11 +3062,19 @@ function normalizePersistentSettingValue(key, value) {
         const item = usage && typeof usage === 'object' && !Array.isArray(usage) ? usage : {};
         const legacyUsedCount = Number(item.usedAt) > 0 ? 1 : 0;
         const useCount = Math.max(0, Math.floor(Number(item.useCount ?? item.usageCount ?? legacyUsedCount) || 0));
+        const excelSource = item.excelSource && typeof item.excelSource === 'object' && !Array.isArray(item.excelSource)
+          ? {
+            filePath: String(item.excelSource.filePath || '').trim(),
+            sheetName: String(item.excelSource.sheetName || '').trim(),
+            rowNumber: Math.max(0, Math.floor(Number(item.excelSource.rowNumber) || 0)),
+          }
+          : null;
         return [String(key || '').trim(), {
           useCount,
           usedAt: Math.max(0, Number(item.usedAt) || 0),
           lastAttemptAt: Math.max(0, Number(item.lastAttemptAt) || 0),
           lastError: String(item.lastError || '').trim(),
+          ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
         }];
       }).filter(([key]) => Boolean(key)));
     case 'paypalEmail':
@@ -4345,6 +4354,13 @@ function normalizeHotmailAccount(account = {}) {
     account.status
     || (normalizedLastAuthAt > 0 ? 'authorized' : 'pending')
   );
+  const excelSource = account.excelSource && typeof account.excelSource === 'object' && !Array.isArray(account.excelSource)
+    ? {
+      filePath: String(account.excelSource.filePath || '').trim(),
+      sheetName: String(account.excelSource.sheetName || '').trim(),
+      rowNumber: Math.max(0, Math.floor(Number(account.excelSource.rowNumber) || 0)),
+    }
+    : null;
   return {
     id: String(account.id || crypto.randomUUID()),
     email: String(account.email || '').trim(),
@@ -4357,6 +4373,7 @@ function normalizeHotmailAccount(account = {}) {
     lastUsedAt: Number.isFinite(Number(account.lastUsedAt)) ? Number(account.lastUsedAt) : 0,
     lastAuthAt: normalizedLastAuthAt,
     lastError: String(account.lastError || ''),
+    ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
   };
 }
 
@@ -5023,6 +5040,149 @@ async function ensureHotmailAccountForFlow(options = {}) {
 function buildHotmailLocalEndpoint(baseUrl, path) {
   const normalizedBaseUrl = normalizeHotmailLocalBaseUrl(baseUrl);
   return new URL(path, `${normalizedBaseUrl}/`).toString();
+}
+
+async function requestHotmailLocalJson(path, body = {}, errorPrefix = 'Hotmail 本地助手请求失败') {
+  const state = await getState();
+  const serviceSettings = getHotmailServiceSettings(state);
+  let response;
+  try {
+    response = await fetch(buildHotmailLocalEndpoint(serviceSettings.localBaseUrl, path), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body || {}),
+    });
+  } catch (err) {
+    throw new Error(`${errorPrefix}：${err.message}`);
+  }
+
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (_) {
+    payload = null;
+  }
+  if (!response.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `${errorPrefix}：HTTP ${response.status}`);
+  }
+  return payload || { ok: true };
+}
+
+async function browseExcelFile() {
+  return requestHotmailLocalJson('/browse-excel-file', {}, '打开 Excel 文件选择器失败');
+}
+
+async function requestHotmailExcelImport(filePath, options = {}) {
+  return requestHotmailLocalJson('/import-hotmail-accounts-excel', {
+    filePath,
+    sheetName: options?.sheetName || '',
+  }, 'Hotmail Excel 导入失败');
+}
+
+async function requestHostedSmsExcelImport(filePath, options = {}) {
+  return requestHotmailLocalJson('/import-hosted-sms-excel', {
+    filePath,
+    sheetName: options?.sheetName || '',
+  }, 'Hosted 接码池 Excel 导入失败');
+}
+
+async function incrementHostedSmsExcelRowForState(state = {}, status = '') {
+  if (String(status || '').trim().toLowerCase() !== 'success') {
+    return null;
+  }
+  const currentEntry = state.hostedCheckoutCurrentSmsEntry || {};
+  const key = currentEntry.key || '';
+  if (!key) {
+    return null;
+  }
+  const usage = normalizePersistentSettingValue('hostedCheckoutSmsPoolUsage', state.hostedCheckoutSmsPoolUsage);
+  const source = currentEntry.excelSource || usage[key]?.excelSource || null;
+  if (!source?.filePath || !source?.rowNumber) {
+    return null;
+  }
+  const payload = await requestHotmailLocalJson('/increment-hosted-sms-excel-row', {
+    filePath: source.filePath,
+    sheetName: source.sheetName || '',
+    rowNumber: source.rowNumber,
+  }, 'Hosted 接码池 Excel 回写失败');
+
+  const nextUsage = normalizePersistentSettingValue('hostedCheckoutSmsPoolUsage', usage);
+  nextUsage[key] = {
+    ...(nextUsage[key] || {}),
+    useCount: Math.max(
+      Math.max(0, Math.floor(Number(nextUsage[key]?.useCount) || 0)) + 1,
+      Math.max(0, Math.floor(Number(payload?.successCount) || 0))
+    ),
+    usedAt: Date.now(),
+    lastAttemptAt: Math.max(0, Number(nextUsage[key]?.lastAttemptAt) || 0),
+    lastError: '',
+    excelSource: source,
+  };
+  await setPersistentSettings({ hostedCheckoutSmsPoolUsage: nextUsage });
+  await setState({ hostedCheckoutSmsPoolUsage: nextUsage });
+  broadcastDataUpdate({ hostedCheckoutSmsPoolUsage: nextUsage });
+  return payload;
+}
+
+function resolveHotmailExcelSourceForState(state = {}) {
+  const accounts = normalizeHotmailAccounts(state.hotmailAccounts);
+  const currentId = String(state.currentHotmailAccountId || '').trim();
+  const currentEmail = String(state.email || '').trim().toLowerCase();
+  return accounts.find((account) => (
+    (currentId && account.id === currentId)
+    || (currentEmail && String(account.email || '').trim().toLowerCase() === currentEmail)
+  ))?.excelSource || null;
+}
+
+function resolveHotmailExcelWritebackData(state = {}, status = '') {
+  const source = resolveHotmailExcelSourceForState(state);
+  if (!source?.filePath || !source?.rowNumber) {
+    return null;
+  }
+  const card = [
+    state?.plusHostedCheckoutGuestProfile?.cardNumber,
+    state?.plusCheckoutCardNumber,
+    state?.gopayHelperCardKey,
+  ].map((value) => String(value || '').trim()).find(Boolean) || '';
+  const phone = String(
+    state?.hostedCheckoutCurrentSmsEntry?.phone
+    || state?.hostedCheckoutPhoneNumber
+    || state?.phoneNumber
+    || state?.signupPhoneNumber
+    || ''
+  ).trim();
+  const name = String(
+    state?.plusHostedCheckoutGuestProfile?.fullName
+    || state?.plusBillingName
+    || state?.fullName
+    || ''
+  ).trim();
+  return {
+    source,
+    name,
+    card,
+    phone,
+    passStatus: String(status || '').trim().toLowerCase() === 'success' ? '开通' : '未开通',
+  };
+}
+
+async function updateHotmailExcelRowForState(state = {}, status = '') {
+  const writeback = resolveHotmailExcelWritebackData(state, status);
+  if (!writeback) {
+    return null;
+  }
+  return requestHotmailLocalJson('/update-hotmail-account-excel-row', {
+    filePath: writeback.source.filePath,
+    sheetName: writeback.source.sheetName || '',
+    rowNumber: writeback.source.rowNumber,
+    name: writeback.name,
+    card: writeback.card,
+    phone: writeback.phone,
+    passStatus: writeback.passStatus,
+  }, 'Hotmail Excel 回写失败');
 }
 
 async function requestHotmailRemoteMailbox(account, mailbox = 'INBOX') {
@@ -11907,6 +12067,17 @@ async function appendAndBroadcastAccountRunRecord(status, stateOverride = null, 
     return null;
   }
 
+  try {
+    await incrementHostedSmsExcelRowForState(state, resolvedStatus);
+  } catch (err) {
+    await addLog(`Hosted 接码池 Excel 回写失败：${getErrorMessage(err)}`, 'warn');
+  }
+  try {
+    await updateHotmailExcelRowForState(state, resolvedStatus);
+  } catch (err) {
+    await addLog(`Hotmail Excel 回写失败：${getErrorMessage(err)}`, 'warn');
+  }
+
   await broadcastAccountRunHistoryUpdate();
   return record;
 }
@@ -13857,7 +14028,11 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   notifyNodeError,
   patchHotmailAccount,
   patchMail2925Account,
+  parseHotmailImportText,
+  browseExcelFile,
   registerTab,
+  requestHotmailExcelImport,
+  requestHostedSmsExcelImport,
   requestStop,
   probeIpProxyExit: null,
   resetState,

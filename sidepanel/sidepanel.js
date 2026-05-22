@@ -223,6 +223,9 @@ const btnHostedSmsPoolClearUsed = document.getElementById('btn-hosted-sms-pool-c
 const btnHostedSmsPoolDeleteAll = document.getElementById('btn-hosted-sms-pool-delete-all');
 const inputHostedSmsPoolImport = document.getElementById('input-hosted-sms-pool-import');
 const btnHostedSmsPoolImport = document.getElementById('btn-hosted-sms-pool-import');
+const inputHostedSmsPoolExcelPath = document.getElementById('input-hosted-sms-pool-excel-path');
+const btnHostedSmsPoolExcelBrowse = document.getElementById('btn-hosted-sms-pool-excel-browse');
+const btnHostedSmsPoolExcelImport = document.getElementById('btn-hosted-sms-pool-excel-import');
 const hostedSmsPoolSummary = document.getElementById('hosted-sms-pool-summary');
 const inputHostedSmsPoolSearch = document.getElementById('input-hosted-sms-pool-search');
 const selectHostedSmsPoolFilter = document.getElementById('select-hosted-sms-pool-filter');
@@ -366,6 +369,7 @@ const inputHotmailSearch = document.getElementById('input-hotmail-search');
 const selectHotmailFilter = document.getElementById('select-hotmail-filter');
 const btnAddHotmailAccount = document.getElementById('btn-add-hotmail-account');
 const btnImportHotmailAccounts = document.getElementById('btn-import-hotmail-accounts');
+const btnImportHotmailExcel = document.getElementById('btn-import-hotmail-excel');
 const btnToggleHotmailForm = document.getElementById('btn-toggle-hotmail-form');
 const btnHotmailUsageGuide = document.getElementById('btn-hotmail-usage-guide');
 const btnClearUsedHotmailAccounts = document.getElementById('btn-clear-used-hotmail-accounts');
@@ -12527,6 +12531,7 @@ const hotmailManager = window.SidepanelHotmailManager?.createHotmailManager({
     btnDeleteAllHotmailAccounts,
     btnHotmailUsageGuide,
     btnImportHotmailAccounts,
+    btnImportHotmailExcel,
     btnToggleHotmailForm,
     btnToggleHotmailList,
     hotmailFormShell,
@@ -12825,13 +12830,16 @@ const bindCustomEmailPoolEvents = customEmailPoolManager?.bindEvents
 bindCustomEmailPoolEvents();
 
 const hostedSmsPoolManager = window.SidepanelHostedSmsPoolManager?.createHostedSmsPoolManager({
-  dom: {
-    btnHostedSmsPoolRefresh,
-    btnHostedSmsPoolClearUsed,
-    btnHostedSmsPoolDeleteAll,
-    inputHostedSmsPoolImport,
-    btnHostedSmsPoolImport,
-    hostedSmsPoolSummary,
+    dom: {
+      btnHostedSmsPoolRefresh,
+      btnHostedSmsPoolClearUsed,
+      btnHostedSmsPoolDeleteAll,
+      inputHostedSmsPoolImport,
+      btnHostedSmsPoolImport,
+      inputHostedSmsPoolExcelPath,
+      btnHostedSmsPoolExcelBrowse,
+      btnHostedSmsPoolExcelImport,
+      hostedSmsPoolSummary,
     inputHostedSmsPoolSearch,
     selectHostedSmsPoolFilter,
     hostedSmsPoolList,
@@ -12864,7 +12872,7 @@ const hostedSmsPoolManager = window.SidepanelHostedSmsPoolManager?.createHostedS
       markSettingsDirty(true);
       await saveSettings({ silent: true });
     },
-    clearFallback: () => {
+      clearFallback: () => {
       if (inputHostedCheckoutVerificationUrl) {
         inputHostedCheckoutVerificationUrl.value = '';
       }
@@ -12875,9 +12883,31 @@ const hostedSmsPoolManager = window.SidepanelHostedSmsPoolManager?.createHostedS
         hostedCheckoutVerificationUrl: '',
         hostedCheckoutPhoneNumber: '',
       });
-      validateHostedCheckoutContactConfig();
+        validateHostedCheckoutContactConfig();
+      },
+      importExcel: async (filePath) => {
+        const response = await sendSidepanelMessage({
+          type: 'IMPORT_HOSTED_SMS_EXCEL',
+          payload: { filePath },
+          source: 'sidepanel',
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || 'Hosted 接码池 Excel 导入失败。');
+        }
+        return response;
+      },
+      browseExcel: async () => {
+        const response = await sendSidepanelMessage({
+          type: 'BROWSE_HOSTED_SMS_EXCEL',
+          payload: {},
+          source: 'sidepanel',
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || '选择 Hosted 接码池 Excel 失败。');
+        }
+        return response;
+      },
     },
-  },
   constants: {
     copyIcon: COPY_ICON,
   },

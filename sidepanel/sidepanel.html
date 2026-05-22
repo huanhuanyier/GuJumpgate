@@ -406,6 +406,12 @@
             <div class="data-inline">
               <button id="btn-hosted-sms-pool-import" class="btn btn-primary btn-sm" type="button">导入号码</button>
             </div>
+            <div class="data-inline">
+              <input id="input-hosted-sms-pool-excel-path" class="data-input mono" type="text"
+                placeholder="Hosted 接码池 Excel 完整路径（A手机号 / B接码链接 / C成功次数）" />
+              <button id="btn-hosted-sms-pool-excel-browse" class="btn btn-outline btn-sm" type="button">选择 Excel</button>
+              <button id="btn-hosted-sms-pool-excel-import" class="btn btn-outline btn-sm" type="button">导入 Excel</button>
+            </div>
             <div class="icloud-card">
               <div id="hosted-sms-pool-summary" class="icloud-summary">导入 PayPal Hosted 接码号码，每行一个号码和验证码接口。</div>
               <div class="icloud-toolbar">
@@ -906,10 +912,11 @@
         <div class="section-mini-copy">
           <span class="section-label">Hotmail 账号池</span>
         </div>
-        <div class="section-mini-actions">
-          <button id="btn-toggle-hotmail-form" class="btn btn-outline btn-xs" type="button"
-            aria-expanded="false">添加账号</button>
-          <button id="btn-hotmail-usage-guide" class="btn btn-ghost btn-xs" type="button">使用教程</button>
+          <div class="section-mini-actions">
+            <button id="btn-toggle-hotmail-form" class="btn btn-outline btn-xs" type="button"
+              aria-expanded="false">添加账号</button>
+            <button id="btn-import-hotmail-excel" class="btn btn-outline btn-xs" type="button">导入 Excel</button>
+            <button id="btn-hotmail-usage-guide" class="btn btn-ghost btn-xs" type="button">使用教程</button>
           <button id="btn-clear-used-hotmail-accounts" class="btn btn-ghost btn-xs" type="button">清空已用</button>
           <button id="btn-delete-all-hotmail-accounts" class="btn btn-ghost btn-xs" type="button">全部删除</button>
           <button id="btn-toggle-hotmail-list" class="btn btn-ghost btn-xs" type="button"
