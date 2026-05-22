@@ -23,6 +23,9 @@ function createExecutor({
   const api = loadModule();
   const events = {
     completed: [],
+    cookieRemovals: [],
+    browsingDataCalls: [],
+    order: [],
     logs: [],
     messages: [],
     submittedPayloads: [],
@@ -38,6 +41,24 @@ function createExecutor({
       events.logs.push({ message, level });
     },
     chrome: {
+      cookies: {
+        getAllCookieStores: async () => [{ id: 'store-a' }],
+        getAll: async () => [
+          { storeId: 'store-a', domain: '.paypal.com', path: '/', name: 'paypal-session' },
+          { storeId: 'store-a', domain: '.paypalobjects.com', path: '/', name: 'paypal-assets' },
+          { storeId: 'store-a', domain: '.example.com', path: '/', name: 'other' },
+        ],
+        remove: async (details) => {
+          events.order.push(`remove:${details.name}`);
+          events.cookieRemovals.push(details);
+          return details;
+        },
+      },
+      browsingData: {
+        removeCookies: async (details) => {
+          events.browsingDataCalls.push(details);
+        },
+      },
       tabs: {
         get: async (tabId = 1) => {
           if (urlQueue.length) {
@@ -65,6 +86,7 @@ function createExecutor({
     ...(typeof queryTabsInAutomationWindow === 'function' ? { queryTabsInAutomationWindow } : {}),
     sendTabMessageUntilStopped: async (_tabId, _source, message) => {
       events.messages.push(message.type);
+      events.order.push(`message:${message.type}`);
       if (message.type === 'PAYPAL_GET_STATE') {
         return stateQueue.shift() || pageStates[pageStates.length - 1] || {};
       }
@@ -261,6 +283,30 @@ test('PayPal approve keeps original combined email and password login path', asy
   assert.equal(events.submittedPayloads.length, 1);
   assert.deepEqual(events.completed.map((item) => item.step), ['paypal-approve']);
   assert.equal(events.messages.includes('PAYPAL_CLICK_APPROVE'), true);
+});
+
+test('PayPal approve clears PayPal cookies before reading the page state', async () => {
+  const { executor, events } = createExecutor({
+    pageStates: [
+      { needsLogin: false, approveReady: true },
+    ],
+    submitResults: [],
+  });
+
+  await executor.executePayPalApprove({
+    paypalEmail: 'user@example.com',
+    paypalPassword: 'secret',
+  });
+
+  assert.deepEqual(
+    events.cookieRemovals.map((details) => details.name),
+    ['paypal-session', 'paypal-assets']
+  );
+  assert.equal(events.browsingDataCalls.length, 1);
+  assert.ok(events.browsingDataCalls[0].origins.includes('https://www.paypal.com'));
+  assert.ok(events.browsingDataCalls[0].origins.includes('https://www.paypalobjects.com'));
+  assert.ok(events.order.indexOf('remove:paypal-session') < events.order.indexOf('message:PAYPAL_GET_STATE'));
+  assert.ok(events.order.indexOf('remove:paypal-assets') < events.order.indexOf('message:PAYPAL_GET_STATE'));
 });
 
 test('PayPal content routes email and approve page operations through the operation delay gate', async () => {

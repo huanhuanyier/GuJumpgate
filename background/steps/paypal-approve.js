@@ -6,6 +6,39 @@
   const PAYPAL_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'content/paypal-flow.js'];
   const PAYPAL_LOGIN_TRANSITION_TIMEOUT_MS = 30000;
   const PAYPAL_LOGIN_TRANSITION_POLL_MS = 500;
+  const PAYPAL_COOKIE_CLEAR_DOMAINS = [
+    'paypal.com',
+    'paypalobjects.com',
+  ];
+  const PAYPAL_COOKIE_CLEAR_ORIGINS = [
+    'https://www.paypal.com',
+    'https://paypal.com',
+    'https://www.paypalobjects.com',
+    'https://paypalobjects.com',
+  ];
+
+  function normalizePayPalCookieDomain(domain) {
+    return String(domain || '').trim().replace(/^\.+/, '').toLowerCase();
+  }
+
+  function shouldClearPayPalCookie(cookie) {
+    const domain = normalizePayPalCookieDomain(cookie?.domain);
+    if (!domain) return false;
+    return PAYPAL_COOKIE_CLEAR_DOMAINS.some((target) => (
+      domain === target || domain.endsWith(`.${target}`)
+    ));
+  }
+
+  function buildPayPalCookieRemovalUrl(cookie) {
+    const host = normalizePayPalCookieDomain(cookie?.domain);
+    const rawPath = String(cookie?.path || '/');
+    const path = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    return `https://${host}${path}`;
+  }
+
+  function getPayPalErrorMessage(error) {
+    return error?.message || String(error || 'unknown error');
+  }
 
   function createPayPalApproveExecutor(deps = {}) {
     const {
@@ -42,6 +75,92 @@
         return storedTabId;
       }
       throw new Error('步骤 8：未找到 PayPal 标签页，请先完成步骤 7。');
+    }
+
+    async function collectPayPalCookies() {
+      if (!chrome?.cookies?.getAll) {
+        return [];
+      }
+
+      const stores = chrome.cookies.getAllCookieStores
+        ? await chrome.cookies.getAllCookieStores()
+        : [{ id: undefined }];
+      const cookies = [];
+      const seen = new Set();
+
+      for (const store of stores) {
+        const storeId = store?.id;
+        const batch = await chrome.cookies.getAll(storeId ? { storeId } : {});
+        for (const cookie of batch || []) {
+          if (!shouldClearPayPalCookie(cookie)) continue;
+          const key = [
+            cookie.storeId || storeId || '',
+            cookie.domain || '',
+            cookie.path || '',
+            cookie.name || '',
+            cookie.partitionKey ? JSON.stringify(cookie.partitionKey) : '',
+          ].join('|');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          cookies.push(cookie);
+        }
+      }
+
+      return cookies;
+    }
+
+    async function removePayPalCookie(cookie) {
+      const details = {
+        url: buildPayPalCookieRemovalUrl(cookie),
+        name: cookie.name,
+      };
+      if (cookie.storeId) {
+        details.storeId = cookie.storeId;
+      }
+      if (cookie.partitionKey) {
+        details.partitionKey = cookie.partitionKey;
+      }
+
+      try {
+        const result = await chrome.cookies.remove(details);
+        return Boolean(result);
+      } catch (error) {
+        console.warn('[MultiPage:paypal] remove cookie failed', {
+          domain: cookie?.domain,
+          name: cookie?.name,
+          message: getPayPalErrorMessage(error),
+        });
+        return false;
+      }
+    }
+
+    async function clearPayPalCookiesBeforeApprove() {
+      if (!chrome?.cookies?.getAll || !chrome.cookies?.remove) {
+        await addLog('步骤 8：当前浏览器不支持 cookies API，跳过进入 PayPal 前 cookie 清理。', 'warn');
+        return;
+      }
+
+      await addLog('步骤 8：进入 PayPal 前清理 PayPal cookies...', 'info');
+      const cookies = await collectPayPalCookies();
+      let removedCount = 0;
+      for (const cookie of cookies) {
+        if (await removePayPalCookie(cookie)) {
+          removedCount += 1;
+        }
+      }
+
+      if (chrome.browsingData?.removeCookies) {
+        try {
+          await chrome.browsingData.removeCookies({
+            since: 0,
+            origins: PAYPAL_COOKIE_CLEAR_ORIGINS,
+          });
+        } catch (error) {
+          await addLog(`步骤 8：browsingData 补扫 PayPal cookies 失败：${getPayPalErrorMessage(error)}`, 'warn');
+        }
+      }
+
+      await addLog(`步骤 8：已清理 ${removedCount} 个 PayPal cookies。`, 'ok');
     }
 
     async function findOpenPayPalTabId() {
@@ -231,6 +350,7 @@
 
     async function executePayPalApprove(state = {}) {
       const tabId = await resolvePayPalTabId(state);
+      await clearPayPalCookiesBeforeApprove();
       await ensurePayPalReady(tabId);
       await setState({ plusCheckoutTabId: tabId });
 
