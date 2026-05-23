@@ -9,6 +9,7 @@
       completeNodeFromBackground = null,
       failNodeFromBackground = null,
       getState = async () => ({}),
+      onSubscriptionSuccess = null,
       setState = async () => {},
       delay = (ms = 0) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0))),
     } = deps;
@@ -92,6 +93,18 @@
         }
 
         if (typeof completeNodeFromBackground === 'function') {
+          if (typeof onSubscriptionSuccess === 'function') {
+            try {
+              await onSubscriptionSuccess({
+                plusReturnUrl: normalizedSuccessUrl,
+                plusHostedCheckoutCompleted: true,
+                plusHostedCheckoutOauthDelaySeconds: oauthDelaySeconds,
+              });
+            } catch (hookError) {
+              await addLog(`订阅成功后 Excel 写入失败：${hookError?.message || hookError}`, 'warn');
+            }
+          }
+
           await completeNodeFromBackground('plus-checkout-create', {
             plusReturnUrl: normalizedSuccessUrl,
             plusHostedCheckoutCompleted: true,

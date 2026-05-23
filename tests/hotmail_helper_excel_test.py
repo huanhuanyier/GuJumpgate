@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 try:
@@ -35,6 +36,20 @@ class HotmailHelperExcelTest(unittest.TestCase):
         self.assertEqual(result["importedCount"], 1)
         self.assertEqual(result["accounts"][0]["raw"], "user@example.com----secret----client-id----refresh-token")
         self.assertEqual(result["accounts"][0]["excelSource"]["rowNumber"], 3)
+
+    def test_import_hotmail_accounts_excel_skips_rows_with_pass_value(self):
+        path = self.make_workbook([
+            ["mail", "name", "card", "phone", "pass", "sell"],
+            ["done@example.com----secret----client-id----refresh-token", "", "", "", "开通", ""],
+            ["failed@example.com----secret----client-id----refresh-token", "", "", "", "未开通", ""],
+            ["next@example.com----secret----client-id----refresh-token", "", "", "", "", ""],
+        ])
+
+        result = hotmail_helper.import_hotmail_accounts_excel(str(path))
+
+        self.assertEqual(result["importedCount"], 1)
+        self.assertEqual(result["accounts"][0]["raw"], "next@example.com----secret----client-id----refresh-token")
+        self.assertEqual(result["accounts"][0]["excelSource"]["rowNumber"], 4)
 
     def test_hosted_sms_excel_import_and_increment(self):
         path = self.make_workbook([
@@ -76,6 +91,25 @@ class HotmailHelperExcelTest(unittest.TestCase):
         self.assertEqual(sheet.cell(row=2, column=3).value, "4111111111111111")
         self.assertEqual(sheet.cell(row=2, column=4).value, "2345678901")
         self.assertEqual(sheet.cell(row=2, column=5).value, "开通")
+
+    def test_unsupported_post_path_does_not_report_missing_hotmail_credentials(self):
+        class Handler(hotmail_helper.HotmailHelperHandler):
+            def __init__(self):
+                pass
+
+        handler = Handler()
+        handler.path = "/unknown-excel-path"
+        captured = {}
+
+        with patch.object(hotmail_helper, "read_json_payload", return_value={}), \
+                patch.object(hotmail_helper, "json_response", side_effect=lambda _self, status, payload: captured.update({
+                    "status": status,
+                    "payload": payload,
+                })):
+            handler.do_POST()
+
+        self.assertEqual(captured["status"], 404)
+        self.assertIn("Unsupported path", captured["payload"]["error"])
 
 
 if __name__ == "__main__":

@@ -225,6 +225,9 @@ def import_hotmail_accounts_excel(file_path, sheet_name=""):
     accounts = []
 
     for row_number in range(start_row, sheet.max_row + 1):
+        pass_value = str(sheet.cell(row=row_number, column=5).value or "").strip()
+        if pass_value:
+            continue
         raw_account = str(sheet.cell(row=row_number, column=1).value or "").strip()
         if not raw_account or not is_hotmail_account_raw_line(raw_account):
             continue
@@ -1144,16 +1147,14 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
                 json_response(self, 200, result)
                 return
 
-            email_addr = str(payload.get("email") or "").strip()
-            client_id = str(payload.get("clientId") or "").strip()
-            refresh_token = str(payload.get("refreshToken") or "").strip()
-            if not email_addr or not client_id or not refresh_token:
-                raise RuntimeError("Missing email/clientId/refreshToken")
-
-            top = max(1, min(int(payload.get("top") or FETCH_LIMIT_DEFAULT), 30))
-            mailboxes = payload.get("mailboxes") if isinstance(payload.get("mailboxes"), list) else [payload.get("mailbox") or "INBOX"]
-
             if request_path == "/messages":
+                email_addr = str(payload.get("email") or "").strip()
+                client_id = str(payload.get("clientId") or "").strip()
+                refresh_token = str(payload.get("refreshToken") or "").strip()
+                if not email_addr or not client_id or not refresh_token:
+                    raise RuntimeError("Missing email/clientId/refreshToken")
+                top = max(1, min(int(payload.get("top") or FETCH_LIMIT_DEFAULT), 30))
+                mailboxes = payload.get("mailboxes") if isinstance(payload.get("mailboxes"), list) else [payload.get("mailbox") or "INBOX"]
                 result = collect_messages(email_addr, client_id, refresh_token, mailboxes, top)
                 json_response(self, 200, {
                     "ok": True,
@@ -1166,6 +1167,13 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
                 return
 
             if request_path == "/code":
+                email_addr = str(payload.get("email") or "").strip()
+                client_id = str(payload.get("clientId") or "").strip()
+                refresh_token = str(payload.get("refreshToken") or "").strip()
+                if not email_addr or not client_id or not refresh_token:
+                    raise RuntimeError("Missing email/clientId/refreshToken")
+                top = max(1, min(int(payload.get("top") or FETCH_LIMIT_DEFAULT), 30))
+                mailboxes = payload.get("mailboxes") if isinstance(payload.get("mailboxes"), list) else [payload.get("mailbox") or "INBOX"]
                 result = collect_messages(email_addr, client_id, refresh_token, mailboxes, top)
                 selected = select_latest_code(
                     result["messages"],

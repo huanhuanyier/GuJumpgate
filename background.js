@@ -5093,6 +5093,9 @@ async function incrementHostedSmsExcelRowForState(state = {}, status = '') {
   if (String(status || '').trim().toLowerCase() !== 'success') {
     return null;
   }
+  if (state?.plusSubscriptionHostedSmsExcelWritebackAt) {
+    return null;
+  }
   const currentEntry = state.hostedCheckoutCurrentSmsEntry || {};
   const key = currentEntry.key || '';
   if (!key) {
@@ -5170,6 +5173,9 @@ function resolveHotmailExcelWritebackData(state = {}, status = '') {
 }
 
 async function updateHotmailExcelRowForState(state = {}, status = '') {
+  if (state?.plusSubscriptionHotmailExcelWritebackAt) {
+    return null;
+  }
   const writeback = resolveHotmailExcelWritebackData(state, status);
   if (!writeback) {
     return null;
@@ -5183,6 +5189,44 @@ async function updateHotmailExcelRowForState(state = {}, status = '') {
     phone: writeback.phone,
     passStatus: writeback.passStatus,
   }, 'Hotmail Excel 回写失败');
+}
+
+async function handleSubscriptionSuccessExcelWriteback(payload = {}, stateOverride = null) {
+  const baseState = stateOverride || await getState();
+  const writebackState = {
+    ...baseState,
+    plusReturnUrl: payload?.plusReturnUrl || baseState?.plusReturnUrl || '',
+    plusHostedCheckoutCompleted: payload?.plusHostedCheckoutCompleted ?? baseState?.plusHostedCheckoutCompleted,
+  };
+  const updates = {};
+
+  if (!writebackState.plusSubscriptionHotmailExcelWritebackAt) {
+    try {
+      const result = await updateHotmailExcelRowForState(writebackState, 'success');
+      if (result) {
+        updates.plusSubscriptionHotmailExcelWritebackAt = Date.now();
+        await addLog('订阅成功：Hotmail Excel 已写入开通结果。', 'ok');
+      }
+    } catch (err) {
+      await addLog(`订阅成功：Hotmail Excel 写入失败：${getErrorMessage(err)}`, 'warn');
+    }
+  }
+
+  if (!writebackState.plusSubscriptionHostedSmsExcelWritebackAt) {
+    try {
+      const result = await incrementHostedSmsExcelRowForState(writebackState, 'success');
+      if (result) {
+        updates.plusSubscriptionHostedSmsExcelWritebackAt = Date.now();
+        await addLog('订阅成功：Hosted 接码池 Excel 成功次数已累加。', 'ok');
+      }
+    } catch (err) {
+      await addLog(`订阅成功：Hosted 接码池 Excel 写入失败：${getErrorMessage(err)}`, 'warn');
+    }
+  }
+
+  if (Object.keys(updates).length) {
+    await setState(updates);
+  }
 }
 
 async function requestHotmailRemoteMailbox(account, mailbox = 'INBOX') {
@@ -11104,6 +11148,9 @@ async function reportCompletedStepSideEffectError(step, error) {
 }
 
 async function runCompletedNodeSideEffects(nodeId, payload, completionState, lastNodeId) {
+  if (nodeId === 'plus-checkout-return' || payload?.plusHostedCheckoutCompleted) {
+    await handleSubscriptionSuccessExcelWriteback(payload, completionState || await getState());
+  }
   await handleNodeData(nodeId, payload);
   if (nodeId === lastNodeId) {
     await appendAndBroadcastAccountRunRecord('success', completionState);
@@ -13843,6 +13890,7 @@ const plusSuccessSessionUploadManager = self.MultiPageBackgroundPlusSuccessSessi
   completeNodeFromBackground,
   failNodeFromBackground,
   getState,
+  onSubscriptionSuccess: (payload) => handleSubscriptionSuccessExcelWriteback(payload),
   setState,
 });
 const step10Executor = self.MultiPageBackgroundStep10?.createStep10Executor({
