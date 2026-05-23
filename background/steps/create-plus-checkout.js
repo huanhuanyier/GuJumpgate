@@ -954,11 +954,11 @@ function FindProxyForURL(url, host) {
         selectedSmsEntry = chooseHostedCheckoutSmsPoolEntry(poolEntries, poolUsage);
         if (selectedSmsEntry) {
           const nextUsage = await updateHostedCheckoutPoolUsage(selectedSmsEntry, {
-            incrementUseCount: true,
+            incrementUseCount: false,
             success: true,
           });
           await addLog(
-            `步骤 6：Hosted 接码池已选择号码 ${selectedSmsEntry.phone}（最少使用次数优先，当前累计 ${Math.max(0, Number(nextUsage?.[selectedSmsEntry.key]?.useCount) || 0)} 次）。`,
+            `步骤 6：Hosted 接码池已选择号码 ${selectedSmsEntry.phone}（成功次数最少优先，当前成功 ${Math.max(0, Number(nextUsage?.[selectedSmsEntry.key]?.useCount) || 0)} 次）。`,
             'info'
           );
         }

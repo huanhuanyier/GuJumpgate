@@ -5113,12 +5113,10 @@ async function incrementHostedSmsExcelRowForState(state = {}, status = '') {
   }, 'Hosted 接码池 Excel 回写失败');
 
   const nextUsage = normalizePersistentSettingValue('hostedCheckoutSmsPoolUsage', usage);
+  const nextSuccessCount = Math.max(0, Math.floor(Number(payload?.successCount) || 0));
   nextUsage[key] = {
     ...(nextUsage[key] || {}),
-    useCount: Math.max(
-      Math.max(0, Math.floor(Number(nextUsage[key]?.useCount) || 0)) + 1,
-      Math.max(0, Math.floor(Number(payload?.successCount) || 0))
-    ),
+    useCount: nextSuccessCount,
     usedAt: Date.now(),
     lastAttemptAt: Math.max(0, Number(nextUsage[key]?.lastAttemptAt) || 0),
     lastError: '',
