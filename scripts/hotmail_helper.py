@@ -14,7 +14,7 @@ from email.utils import parseaddr, parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse, urlencode
+from urllib.parse import quote, urlparse, urlencode
 from urllib.request import Request, urlopen
 
 DEFAULT_HOST = "127.0.0.1"
@@ -67,6 +67,8 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 ACCOUNT_LOG_PATH = os.path.join(BASE_DIR, "data", "account-run-history.txt")
 ACCOUNT_RECORDS_SNAPSHOT_PATH = os.path.join(BASE_DIR, "data", "account-run-history.json")
 ACCOUNT_RECORDS_LOCK = threading.Lock()
+DEFAULT_MIHOMO_PIPE_PATH = r"\\.\pipe\verge-mihomo"
+DEFAULT_RESIDENTIAL_PROXY_GROUP_NAME = "GuJumpgate住宅IP"
 
 
 def normalize_server_port(raw_value, default=DEFAULT_PORT):
@@ -140,6 +142,123 @@ def get_json(url, headers=None):
     request = Request(url, headers=headers or {})
     with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
         return response.getcode(), json.loads(response.read().decode("utf-8"))
+
+
+def decode_http_response_body(raw_response):
+    header_bytes, _, body = raw_response.partition(b"\r\n\r\n")
+    if not header_bytes:
+        raise RuntimeError("Empty mihomo response")
+    header_text = header_bytes.decode("iso-8859-1", errors="replace")
+    status_line = header_text.splitlines()[0] if header_text.splitlines() else ""
+    status_parts = status_line.split()
+    status_code = int(status_parts[1]) if len(status_parts) >= 2 and status_parts[1].isdigit() else 0
+    headers = {}
+    for line in header_text.splitlines()[1:]:
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip().lower()] = value.strip().lower()
+    if headers.get("transfer-encoding") == "chunked":
+        decoded = bytearray()
+        position = 0
+        while True:
+            line_end = body.find(b"\r\n", position)
+            if line_end < 0:
+                raise RuntimeError("Invalid chunked mihomo response")
+            size_text = body[position:line_end].split(b";", 1)[0].strip()
+            chunk_size = int(size_text, 16)
+            position = line_end + 2
+            if chunk_size == 0:
+                body = bytes(decoded)
+                break
+            decoded.extend(body[position:position + chunk_size])
+            position += chunk_size + 2
+    if status_code < 200 or status_code >= 300:
+        detail = body.decode("utf-8", errors="replace")
+        raise RuntimeError(f"mihomo HTTP {status_code}: {compact_text(detail)}")
+    return body
+
+
+class MihomoPipeTransport:
+    def __init__(self, pipe_path=DEFAULT_MIHOMO_PIPE_PATH, secret="set-your-secret"):
+        self.pipe_path = pipe_path or DEFAULT_MIHOMO_PIPE_PATH
+        self.secret = secret or ""
+
+    def request_json(self, method, path, payload=None):
+        body = b""
+        headers = [
+            f"{method} {path} HTTP/1.1",
+            "Host: localhost",
+            "Connection: close",
+        ]
+        if self.secret:
+            headers.append(f"Authorization: Bearer {self.secret}")
+        if payload is not None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers.append("Content-Type: application/json")
+            headers.append(f"Content-Length: {len(body)}")
+        request_bytes = ("\r\n".join(headers) + "\r\n\r\n").encode("utf-8") + body
+        with open(self.pipe_path, "r+b", buffering=0) as pipe:
+            pipe.write(request_bytes)
+            chunks = []
+            while True:
+                chunk = pipe.read(8192)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        response_body = decode_http_response_body(b"".join(chunks))
+        if not response_body:
+            return {"ok": True}
+        return json.loads(response_body.decode("utf-8"))
+
+    def get_proxy(self, group_name):
+        return self.request_json("GET", f"/proxies/{quote(str(group_name), safe='')}")
+
+    def put_proxy(self, group_name, proxy_name):
+        return self.request_json("PUT", f"/proxies/{quote(str(group_name), safe='')}", {
+            "name": str(proxy_name),
+        })
+
+
+def normalize_proxy_name_list(value):
+    if not isinstance(value, list):
+        return []
+    result = []
+    seen = set()
+    for item in value:
+        name = str(item or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        result.append(name)
+    return result
+
+
+def advance_residential_proxy(payload, transport=None):
+    group_name = str(payload.get("groupName") or DEFAULT_RESIDENTIAL_PROXY_GROUP_NAME).strip()
+    if "?" in group_name:
+        group_name = DEFAULT_RESIDENTIAL_PROXY_GROUP_NAME
+    proxies = normalize_proxy_name_list(payload.get("proxies"))
+    if not group_name:
+        raise RuntimeError("Missing groupName")
+    if not proxies:
+        raise RuntimeError("Missing residential proxy list")
+    active_transport = transport or MihomoPipeTransport(
+        pipe_path=str(payload.get("pipePath") or DEFAULT_MIHOMO_PIPE_PATH),
+        secret=str(payload.get("secret") or "set-your-secret"),
+    )
+    proxy_state = active_transport.get_proxy(group_name)
+    previous_proxy = str(proxy_state.get("now") or "").strip()
+    if previous_proxy in proxies:
+        next_proxy = proxies[(proxies.index(previous_proxy) + 1) % len(proxies)]
+    else:
+        next_proxy = proxies[0]
+    active_transport.put_proxy(group_name, next_proxy)
+    return {
+        "ok": True,
+        "groupName": group_name,
+        "previousProxy": previous_proxy,
+        "nextProxy": next_proxy,
+    }
 
 
 def mask_secret(value, keep=6):
@@ -1144,6 +1263,11 @@ class HotmailHelperHandler(BaseHTTPRequestHandler):
                     payload.get("phone"),
                     payload.get("passStatus"),
                 )
+                json_response(self, 200, result)
+                return
+
+            if request_path == "/advance-residential-proxy":
+                result = advance_residential_proxy(payload)
                 json_response(self, 200, result)
                 return
 

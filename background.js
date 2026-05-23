@@ -33,6 +33,7 @@ importScripts(
   'background/verification-flow.js',
   'background/auto-run-controller.js',
   'background/plus-success-session-upload.js',
+  'background/residential-proxy-switcher.js',
   'background/tab-runtime.js',
   'background/navigation-utils.js',
   'background/logging-status.js',
@@ -11152,6 +11153,11 @@ async function runCompletedNodeSideEffects(nodeId, payload, completionState, las
   await handleNodeData(nodeId, payload);
   if (nodeId === lastNodeId) {
     await appendAndBroadcastAccountRunRecord('success', completionState);
+    await residentialProxySwitcher?.advanceAfterAccountSuccess?.({
+      nodeId,
+      payload,
+      state: completionState,
+    });
   }
 }
 
@@ -13890,6 +13896,11 @@ const plusSuccessSessionUploadManager = self.MultiPageBackgroundPlusSuccessSessi
   getState,
   onSubscriptionSuccess: (payload) => handleSubscriptionSuccessExcelWriteback(payload),
   setState,
+});
+const residentialProxySwitcher = self.MultiPageResidentialProxySwitcher?.createResidentialProxySwitcher({
+  addLog,
+  buildLocalHelperEndpoint: (baseUrl, path) => buildHotmailLocalEndpoint(baseUrl, path),
+  getState,
 });
 const step10Executor = self.MultiPageBackgroundStep10?.createStep10Executor({
   addLog,
