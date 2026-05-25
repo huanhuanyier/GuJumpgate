@@ -70,6 +70,29 @@ test('SMSBower signup success defers API completion until the reusable number re
   assert.match(reusableMarker, /if\s*\(successfulUses\s*>=\s*normalizedActivation\.maxUses\)\s*\{[\s\S]*?completePhoneActivation\(state,\s*nextReusableActivation\)/);
 });
 
+test('SMSBower post-login phone success defers API completion and stores the number for the next account', () => {
+  const phoneSuccess = extractSnippet(
+    phoneFlowSource,
+    'const latestSuccessState = await getState();',
+    'await addLog(\'步骤 9'
+  );
+  assert.match(phoneSuccess, /shouldDeferCompletionForReusableActivation\(latestSuccessState,\s*activation\)/);
+  assert.match(phoneSuccess, /if\s*\(!deferCompletion\)\s*\{[\s\S]*?completePhoneActivation\(latestSuccessState,\s*activation\)/);
+  assert.match(phoneSuccess, /markActivationReusableAfterSuccess\(latestSuccessState,\s*activation\)/);
+  assert.doesNotMatch(phoneSuccess, /completePhoneActivation\(latestSuccessState,\s*activation\);\s*\}\s*await markFreeReusableActivationAfterAutoSuccess/);
+});
+
+test('SMSBower login phone success also defers API completion and stores the number for reuse', () => {
+  const finalizeLogin = extractSnippet(
+    phoneFlowSource,
+    'async function finalizeLoginPhoneActivationAfterSuccess',
+    'async function completeLoginPhoneVerificationFlow'
+  );
+  assert.match(finalizeLogin, /shouldDeferCompletionForReusableActivation\(state,\s*normalizedActivation\)/);
+  assert.match(finalizeLogin, /if\s*\(!deferCompletion\)\s*\{[\s\S]*?completePhoneActivation\(state,\s*normalizedActivation\)/);
+  assert.match(finalizeLogin, /markActivationReusableAfterSuccess\(state,\s*normalizedActivation\)/);
+});
+
 test('SMSBower provider exposes reuseActivation and keeps successful numbers reusable for multiple attempts', () => {
   assert.match(smsBowerSource, /async function reuseActivation\(state\s*=\s*\{\},\s*activation,\s*deps\s*=\s*\{\}\)/);
   const reuse = extractSnippet(

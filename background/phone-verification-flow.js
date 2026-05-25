@@ -6294,7 +6294,11 @@
       }
 
       return withPhoneVerificationLogContext({ step: visibleStep, stepKey: 'fetch-login-code' }, async () => {
-        await completePhoneActivation(state, normalizedActivation);
+        const deferCompletion = shouldDeferCompletionForReusableActivation(state, normalizedActivation);
+        if (!deferCompletion) {
+          await completePhoneActivation(state, normalizedActivation);
+        }
+        await markActivationReusableAfterSuccess(state, normalizedActivation);
         await setPhoneRuntimeState({
           signupPhoneActivation: null,
           signupPhoneCompletedActivation: buildCompletedActivationSnapshot(normalizedActivation),
@@ -7135,11 +7139,14 @@
               );
               await markFreeReusableActivationAfterInitialSuccess(latestSuccessState, activation);
             } else {
-              await completePhoneActivation(latestSuccessState, activation);
+              const deferCompletion = shouldDeferCompletionForReusableActivation(latestSuccessState, activation);
+              if (!deferCompletion) {
+                await completePhoneActivation(latestSuccessState, activation);
+              }
             }
-            await markFreeReusableActivationAfterAutoSuccess(state, activation);
+            await markFreeReusableActivationAfterAutoSuccess(latestSuccessState, activation);
             if (!isFreeAutoReuseActivation(activation)) {
-              await markActivationReusableAfterSuccess(state, activation);
+              await markActivationReusableAfterSuccess(latestSuccessState, activation);
             }
             clearCountrySmsFailure(activation.countryId, activation.provider);
             shouldCancelActivation = false;
