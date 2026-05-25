@@ -211,7 +211,7 @@
       countryId: normalizeSmsBowerCountryId(fallback.countryId ?? fallback.id, DEFAULT_COUNTRY_ID),
       countryLabel: normalizeSmsBowerCountryLabel(fallback.countryLabel || fallback.label, DEFAULT_COUNTRY_LABEL),
       successfulUses: Math.max(0, Math.floor(Number(record?.successfulUses) || 0)),
-      maxUses: 1,
+      maxUses: Math.max(1, Math.floor(Number(record?.maxUses) || 3)),
       ...(activationCost !== undefined ? { price: Number(activationCost) } : {}),
     };
   }
@@ -280,6 +280,15 @@
       throw new Error(`SMSBower 已尝试 ${countryCandidates.length} 个候选国家，均无可用号码：${Array.from(new Set(failures)).join(' | ')}。`);
     }
     throw lastError || new Error('SMSBower 获取手机号失败。');
+  }
+
+  async function reuseActivation(state = {}, activation, deps = {}) {
+    const normalizedActivation = normalizeActivation(activation, activation);
+    if (!normalizedActivation) {
+      throw new Error('缺少可复用的 SMSBower 手机号订单。');
+    }
+    await requestAdditionalSms(state, normalizedActivation, deps);
+    return normalizedActivation;
   }
 
   async function setActivationStatus(state = {}, activation, status, deps = {}) {
@@ -441,6 +450,7 @@
       normalizeServiceCode: normalizeSmsBowerServiceCode,
       resolveCountryCandidates,
       requestActivation: (state, options) => requestActivation(state, options, providerDeps),
+      reuseActivation: (state, activation) => reuseActivation(state, activation, providerDeps),
       finishActivation: (state, activation) => finishActivation(state, activation, providerDeps),
       cancelActivation: (state, activation) => cancelActivation(state, activation, providerDeps),
       banActivation: (state, activation) => cancelActivation(state, activation, providerDeps),

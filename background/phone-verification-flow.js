@@ -121,6 +121,7 @@
       { prefix: '44', id: 16, label: 'United Kingdom' },
       { prefix: '81', id: 182, label: 'Japan' },
       { prefix: '49', id: 43, label: 'Germany' },
+      { prefix: '966', id: 53, label: 'Saudi Arabia' },
       { prefix: '55', id: 73, label: 'Brazil' },
       { prefix: '33', id: 78, label: 'France' },
       { prefix: '56', id: 151, label: 'Chile' },
@@ -1159,6 +1160,45 @@
         return false;
       }
       return normalizePhoneSmsReuseEnabled(state);
+    }
+
+    function canReuseSavedActivationForCurrentFlow(state = {}, options = {}) {
+      if (options?.allowPhoneSignupReuse === true) {
+        return true;
+      }
+      return !isPhoneSignupIdentityState(state);
+    }
+
+    function shouldUseSavedActivationReuse(state = {}, options = {}) {
+      if (options?.allowPhoneSignupReuse === true) {
+        return normalizePhoneSmsReuseEnabled(state);
+      }
+      return isPhoneSmsReuseEnabled(state);
+    }
+
+    function isReusableActivationProvider(provider) {
+      const normalizedProvider = normalizePhoneSmsProvider(provider);
+      return normalizedProvider === PHONE_SMS_PROVIDER_HERO
+        || normalizedProvider === PHONE_SMS_PROVIDER_5SIM
+        || normalizedProvider === PHONE_SMS_PROVIDER_SMSBOWER;
+    }
+
+    function shouldDeferCompletionForReusableActivation(state = {}, activation, options = {}) {
+      const normalizedActivation = normalizeActivation(activation);
+      const allowPhoneSignup = options?.allowPhoneSignup === true;
+      if (!normalizedActivation) {
+        return false;
+      }
+      if (!isReusableActivationProvider(normalizedActivation.provider)) {
+        return false;
+      }
+      if (normalizedActivation.provider !== PHONE_SMS_PROVIDER_SMSBOWER) {
+        return false;
+      }
+      if (!(allowPhoneSignup ? normalizePhoneSmsReuseEnabled(state) : isPhoneSmsReuseEnabled(state))) {
+        return false;
+      }
+      return normalizedActivation.successfulUses + 1 < normalizedActivation.maxUses;
     }
 
     function createResolvedFiveSimProvider() {
@@ -3976,6 +4016,12 @@
           return provider.reuseActivation(state, normalizedActivation);
         }
       }
+      if (getActivationProviderId(normalizedActivation, state) === PHONE_SMS_PROVIDER_SMSBOWER) {
+        const provider = getSmsBowerProviderForState(state);
+        if (provider?.reuseActivation) {
+          return provider.reuseActivation(state, normalizedActivation);
+        }
+      }
 
       const config = resolvePhoneConfig(state);
       if (config.provider === PHONE_SMS_PROVIDER_5SIM) {
@@ -5180,14 +5226,14 @@
         ...state,
         phoneSmsProvider: normalizePhoneSmsProvider(providerName),
       });
-      const canUseSavedActivationForCurrentFlow = !isPhoneSignupIdentityState(state);
+      const canUseSavedActivationForCurrentFlow = canReuseSavedActivationForCurrentFlow(state, options);
       const preferredActivation = normalizeActivation(state[PREFERRED_PHONE_ACTIVATION_STATE_KEY]);
       let failedPreferredActivation = null;
       const canTryPreferredActivation = (
         canUseSavedActivationForCurrentFlow
         && !Boolean(options?.skipPreferredActivation)
         && preferredActivation
-        && (provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_5SIM)
+        && isReusableActivationProvider(provider)
         && preferredActivation.provider === provider
         && !blockedCountryIds.has(normalizeCountryKey(preferredActivation.countryId))
         && allowedCountryIds.has(normalizeCountryKey(preferredActivation.countryId))
@@ -5211,7 +5257,7 @@
           );
         }
       }
-      const reuseEnabled = isPhoneSmsReuseEnabled(state);
+      const reuseEnabled = shouldUseSavedActivationReuse(state, options);
       const reusableActivation = normalizeActivation(state[REUSABLE_PHONE_ACTIVATION_STATE_KEY]);
       const reusableActivationPool = readReusableActivationPoolFromState(state);
       const reusableCandidates = [];
@@ -5231,7 +5277,7 @@
       pushReusableCandidate(reusableActivation);
       reusableActivationPool.forEach((candidate) => pushReusableCandidate(candidate));
 
-      if (reuseEnabled && (provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_5SIM)) {
+      if (reuseEnabled && isReusableActivationProvider(provider)) {
         for (const candidateActivation of reusableCandidates) {
           if (candidateActivation.provider !== provider) {
             continue;
@@ -5340,6 +5386,7 @@
       return withPhoneVerificationLogContext({ step: 2, stepKey: 'submit-signup-email' }, async () => {
         const activation = await acquirePhoneActivation(state, {
           ...options,
+          allowPhoneSignupReuse: true,
           logLabel: options?.logLabel || '步骤 2',
         });
         const normalizedActivation = normalizeActivation(activation);
@@ -5364,12 +5411,13 @@
       });
     }
 
-    async function markActivationReusableAfterSuccess(state, activation) {
+    async function markActivationReusableAfterSuccess(state, activation, options = {}) {
       const normalizedActivation = normalizeActivation(activation);
-      if (isPhoneSignupIdentityState(state)) {
+      const allowPhoneSignup = options?.allowPhoneSignup === true;
+      if (isPhoneSignupIdentityState(state) && !allowPhoneSignup) {
         return;
       }
-      if (!isPhoneSmsReuseEnabled(state)) {
+      if (!(allowPhoneSignup ? normalizePhoneSmsReuseEnabled(state) : isPhoneSmsReuseEnabled(state))) {
         await clearReusableActivation();
         return;
       }
@@ -5378,8 +5426,7 @@
         return;
       }
       const reusableProvider = normalizedActivation.provider;
-      const canPersistReusableActivation = reusableProvider === PHONE_SMS_PROVIDER_HERO
-        || reusableProvider === PHONE_SMS_PROVIDER_5SIM;
+      const canPersistReusableActivation = isReusableActivationProvider(reusableProvider);
       if (!canPersistReusableActivation) {
         await clearReusableActivation();
         return;
@@ -5398,6 +5445,7 @@
         return;
       }
       if (successfulUses >= normalizedActivation.maxUses) {
+        await completePhoneActivation(state, nextReusableActivation);
         await clearReusableActivation();
         await removeReusableActivationFromPool(nextReusableActivation, { state });
         return;
@@ -5974,8 +6022,11 @@
         await clearSignupPhoneRuntimeState();
         return null;
       }
-      await completePhoneActivation(state, normalizedActivation);
-      await markActivationReusableAfterSuccess(state, normalizedActivation);
+      const deferCompletion = shouldDeferCompletionForReusableActivation(state, normalizedActivation, { allowPhoneSignup: true });
+      if (!deferCompletion) {
+        await completePhoneActivation(state, normalizedActivation);
+      }
+      await markActivationReusableAfterSuccess(state, normalizedActivation, { allowPhoneSignup: true });
       await clearSignupPhoneRuntimeState({
         signupPhoneCompletedActivation: buildCompletedActivationSnapshot(normalizedActivation),
         signupPhoneNumber: normalizedActivation.phoneNumber,

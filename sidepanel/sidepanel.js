@@ -703,6 +703,7 @@ const HERO_SMS_SUPPORTED_COUNTRY_ITEMS = Object.freeze([
   { id: 33, chn: '哥伦比亚', eng: 'Colombia' },
   { id: 43, chn: '德国', eng: 'Germany' },
   { id: 52, chn: '泰国', eng: 'Thailand' },
+  { id: 53, chn: '沙特阿拉伯', eng: 'Saudi Arabia' },
   { id: 73, chn: '巴西', eng: 'Brazil' },
   { id: 78, chn: '法国', eng: 'France' },
   { id: 10, chn: '越南', eng: 'Vietnam' },
@@ -6010,6 +6011,45 @@ function buildPhoneSmsPriceRangePreviewMessage(range = {}) {
   return rangeText ? `区间内无可用号源（当前 ${rangeText}）` : '暂无可用号源';
 }
 
+function collectPhoneSmsPriceEntriesForPreview(payload, entries = []) {
+  if (Array.isArray(payload)) {
+    payload.forEach((entry) => collectPhoneSmsPriceEntriesForPreview(entry, entries));
+    return entries;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return entries;
+  }
+  const cost = Number(payload.cost ?? payload.price);
+  const count = Number(payload.count);
+  if (Number.isFinite(cost) && cost > 0) {
+    entries.push({
+      cost: Math.round(cost * 10000) / 10000,
+      count: Number.isFinite(count) ? count : 0,
+    });
+  }
+  Object.entries(payload).forEach(([key, value]) => {
+    const keyedPrice = Number(key);
+    if (!Number.isFinite(keyedPrice) || keyedPrice <= 0) {
+      return;
+    }
+    if (value && typeof value === 'object') {
+      const keyedCount = Number(value.count);
+      entries.push({
+        cost: Math.round(keyedPrice * 10000) / 10000,
+        count: Number.isFinite(keyedCount) ? keyedCount : 0,
+      });
+      return;
+    }
+    const numericCount = Number(value);
+    entries.push({
+      cost: Math.round(keyedPrice * 10000) / 10000,
+      count: Number.isFinite(numericCount) ? numericCount : 0,
+    });
+  });
+  Object.values(payload).forEach((entry) => collectPhoneSmsPriceEntriesForPreview(entry, entries));
+  return entries;
+}
+
 function formatPriceTiersForPreview(entries = [], options = {}) {
   const maxPrice = Number(options?.maxPrice);
   const hasMaxPrice = Number.isFinite(maxPrice) && maxPrice > 0;
@@ -7765,45 +7805,6 @@ async function previewFiveSimPriceTiers() {
     return;
   }
 
-  const collectPriceEntries = (payload, entries = []) => {
-    if (Array.isArray(payload)) {
-      payload.forEach((entry) => collectPriceEntries(entry, entries));
-      return entries;
-    }
-    if (!payload || typeof payload !== 'object') {
-      return entries;
-    }
-    const cost = Number(payload.cost);
-    const count = Number(payload.count);
-    if (Number.isFinite(cost) && cost > 0) {
-      entries.push({
-        cost: Math.round(cost * 10000) / 10000,
-        count: Number.isFinite(count) ? count : 0,
-      });
-    }
-    Object.entries(payload).forEach(([key, value]) => {
-      const keyedPrice = Number(key);
-      if (!Number.isFinite(keyedPrice) || keyedPrice <= 0) {
-        return;
-      }
-      if (value && typeof value === 'object') {
-        const keyedCount = Number(value.count);
-        entries.push({
-          cost: Math.round(keyedPrice * 10000) / 10000,
-          count: Number.isFinite(keyedCount) ? keyedCount : 0,
-        });
-        return;
-      }
-      const numericCount = Number(value);
-      entries.push({
-        cost: Math.round(keyedPrice * 10000) / 10000,
-        count: Number.isFinite(numericCount) ? numericCount : 0,
-      });
-    });
-    Object.values(payload).forEach((entry) => collectPriceEntries(entry, entries));
-    return entries;
-  };
-
   const previews = [];
   for (const countryCode of countryCodes) {
     const countryLabel = getFiveSimCountryLabelByCode(countryCode) || countryCode;
@@ -7819,7 +7820,7 @@ async function previewFiveSimPriceTiers() {
       }
       const productRoot = payload?.[product] || payload;
       const countryRoot = productRoot?.[countryCode] || productRoot;
-      const tierEntries = collectPriceEntries(countryRoot, [])
+      const tierEntries = collectPhoneSmsPriceEntriesForPreview(countryRoot, [])
         .filter((entry) => Number.isFinite(entry.cost) && entry.cost > 0)
         .map((entry) => ({
           price: entry.cost,
@@ -7872,45 +7873,6 @@ async function buildFiveSimPricePreviewLines(options = {}) {
     return [`${providerLabel}: ${buildPhoneSmsPriceRangePreviewMessage(priceRange)}`];
   }
 
-  const collectPriceEntries = (payload, entries = []) => {
-    if (Array.isArray(payload)) {
-      payload.forEach((entry) => collectPriceEntries(entry, entries));
-      return entries;
-    }
-    if (!payload || typeof payload !== 'object') {
-      return entries;
-    }
-    const cost = Number(payload.cost);
-    const count = Number(payload.count);
-    if (Number.isFinite(cost) && cost > 0) {
-      entries.push({
-        cost: Math.round(cost * 10000) / 10000,
-        count: Number.isFinite(count) ? count : 0,
-      });
-    }
-    Object.entries(payload).forEach(([key, value]) => {
-      const keyedPrice = Number(key);
-      if (!Number.isFinite(keyedPrice) || keyedPrice <= 0) {
-        return;
-      }
-      if (value && typeof value === 'object') {
-        const keyedCount = Number(value.count);
-        entries.push({
-          cost: Math.round(keyedPrice * 10000) / 10000,
-          count: Number.isFinite(keyedCount) ? keyedCount : 0,
-        });
-        return;
-      }
-      const numericCount = Number(value);
-      entries.push({
-        cost: Math.round(keyedPrice * 10000) / 10000,
-        count: Number.isFinite(numericCount) ? numericCount : 0,
-      });
-    });
-    Object.values(payload).forEach((entry) => collectPriceEntries(entry, entries));
-    return entries;
-  };
-
   const previews = [];
   for (const countryCode of countryCodes) {
     const countryLabel = getFiveSimCountryLabelByCode(countryCode) || countryCode;
@@ -7926,7 +7888,7 @@ async function buildFiveSimPricePreviewLines(options = {}) {
       }
       const productRoot = payload?.[product] || payload;
       const countryRoot = productRoot?.[countryCode] || productRoot;
-      const tierEntries = collectPriceEntries(countryRoot, [])
+      const tierEntries = collectPhoneSmsPriceEntriesForPreview(countryRoot, [])
         .filter((entry) => Number.isFinite(entry.cost) && entry.cost > 0)
         .map((entry) => ({
           price: entry.cost,
@@ -8056,7 +8018,7 @@ async function previewHeroSmsPriceTiers() {
             smsBowerLines.push(`${countryLabel}: ${summarizeHeroSmsPreviewError(payload, response.status)}`);
             continue;
           }
-          const tierEntries = collectPriceEntries(payload, [])
+          const tierEntries = collectPhoneSmsPriceEntriesForPreview(payload, [])
             .filter((entry) => Number.isFinite(Number(entry.cost)) && Number(entry.cost) > 0)
             .map((entry) => ({
               price: Math.round(Number(entry.cost) * 10000) / 10000,
@@ -8911,6 +8873,7 @@ function updatePhoneVerificationSettingsUI() {
   const heroProviderValue = typeof PHONE_SMS_PROVIDER_HERO !== 'undefined' ? PHONE_SMS_PROVIDER_HERO : 'hero-sms';
   const fiveSimProviderValue = typeof PHONE_SMS_PROVIDER_FIVE_SIM !== 'undefined' ? PHONE_SMS_PROVIDER_FIVE_SIM : '5sim';
   const nexSmsProviderValue = typeof PHONE_SMS_PROVIDER_NEXSMS !== 'undefined' ? PHONE_SMS_PROVIDER_NEXSMS : 'nexsms';
+  const smsBowerProviderValue = typeof PHONE_SMS_PROVIDER_SMSBOWER !== 'undefined' ? PHONE_SMS_PROVIDER_SMSBOWER : 'smsbower';
   const providerOrderForDisplay = resolveNormalizedProviderOrderForRuntime(latestState || {});
   const provider = providerOrderForDisplay[0] || (
     typeof getSelectedPhoneSmsProvider === 'function'
@@ -8920,6 +8883,7 @@ function updatePhoneVerificationSettingsUI() {
   const heroProvider = provider === heroProviderValue;
   const fiveSimProvider = provider === fiveSimProviderValue;
   const nexSmsProvider = provider === nexSmsProviderValue;
+  const smsBowerProvider = provider === smsBowerProviderValue;
   if (rowPhoneVerificationEnabled) {
     rowPhoneVerificationEnabled.style.display = canShowPhoneSettings ? '' : 'none';
   }
@@ -8975,10 +8939,10 @@ function updatePhoneVerificationSettingsUI() {
   if (typeof rowPhoneSignupReloginAfterBindEmail !== 'undefined' && rowPhoneSignupReloginAfterBindEmail) {
     rowPhoneSignupReloginAfterBindEmail.style.display = showPhoneSignupReloginAfterBindEmail ? '' : 'none';
   }
-  if (rowHeroSmsCountry) rowHeroSmsCountry.style.display = showSettings && heroProvider ? '' : 'none';
-  if (rowHeroSmsCountryFallback) rowHeroSmsCountryFallback.style.display = showSettings && heroProvider ? '' : 'none';
+  if (rowHeroSmsCountry) rowHeroSmsCountry.style.display = showSettings && (heroProvider || smsBowerProvider) ? '' : 'none';
+  if (rowHeroSmsCountryFallback) rowHeroSmsCountryFallback.style.display = showSettings && (heroProvider || smsBowerProvider) ? '' : 'none';
   if (rowHeroSmsAcquirePriority) rowHeroSmsAcquirePriority.style.display = showSettings && heroProvider ? '' : 'none';
-  if (rowHeroSmsApiKey) rowHeroSmsApiKey.style.display = showSettings && heroProvider ? '' : 'none';
+  if (rowHeroSmsApiKey) rowHeroSmsApiKey.style.display = showSettings && (heroProvider || smsBowerProvider) ? '' : 'none';
   if (rowFiveSimApiKey) rowFiveSimApiKey.style.display = showSettings && fiveSimProvider ? '' : 'none';
   if (rowFiveSimCountry) rowFiveSimCountry.style.display = showSettings && fiveSimProvider ? '' : 'none';
   if (rowFiveSimCountryFallback) rowFiveSimCountryFallback.style.display = showSettings && fiveSimProvider ? '' : 'none';
@@ -17499,10 +17463,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.payload.phoneSmsProvider !== undefined && selectPhoneSmsProvider) {
         setPhoneSmsProviderSelectValue(message.payload.phoneSmsProvider);
       }
-      if ((message.payload.heroSmsApiKey !== undefined || message.payload.fiveSimApiKey !== undefined) && inputHeroSmsApiKey) {
+      if (
+        (
+          message.payload.heroSmsApiKey !== undefined
+          || message.payload.fiveSimApiKey !== undefined
+          || message.payload.smsBowerApiKey !== undefined
+        )
+        && inputHeroSmsApiKey
+      ) {
         inputHeroSmsApiKey.value = getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_FIVE_SIM
           ? (message.payload.fiveSimApiKey !== undefined ? message.payload.fiveSimApiKey || '' : latestState?.fiveSimApiKey || '')
-          : (message.payload.heroSmsApiKey !== undefined ? message.payload.heroSmsApiKey || '' : latestState?.heroSmsApiKey || '');
+          : (getSelectedPhoneSmsProvider() === PHONE_SMS_PROVIDER_SMSBOWER
+            ? (message.payload.smsBowerApiKey !== undefined ? message.payload.smsBowerApiKey || '' : latestState?.smsBowerApiKey || '')
+            : (message.payload.heroSmsApiKey !== undefined ? message.payload.heroSmsApiKey || '' : latestState?.heroSmsApiKey || ''));
       }
       if (message.payload.fiveSimApiKey !== undefined && inputFiveSimApiKey) {
         inputFiveSimApiKey.value = String(message.payload.fiveSimApiKey || '').trim();

@@ -35,6 +35,7 @@ importScripts(
   'background/auto-run-controller.js',
   'background/plus-success-session-upload.js',
   'background/residential-proxy-switcher.js',
+  'background/success-account-pool-pruner.js',
   'background/tab-runtime.js',
   'background/navigation-utils.js',
   'background/logging-status.js',
@@ -5396,7 +5397,7 @@ function resolveHotmailExcelWritebackData(state = {}, status = '') {
     name,
     card,
     phone,
-    passStatus: String(status || '').trim().toLowerCase() === 'success' ? '开通' : '未开通',
+    passStatus: String(status || '').trim().toLowerCase() === 'success' ? '开通' : '',
   };
 }
 
@@ -10000,6 +10001,11 @@ function isStep4Route405RecoveryLimitFailure(error) {
   return /STEP4_405_RECOVERY_LIMIT::|步骤\s*4：检测到\s*405\s*错误页面，已连续点击“重试”恢复/i.test(message);
 }
 
+function isStep4AuthRestartFromStep2Failure(error) {
+  const message = getErrorMessage(error);
+  return /STEP4_AUTH_RESTART_FROM_STEP2::|步骤\s*4：检测到认证页临时登录错误/i.test(message);
+}
+
 function isPhoneSmsPlatformRateLimitFailure(error) {
   const message = getErrorMessage(error);
   return /FIVE_SIM_RATE_LIMIT::|5sim[\s\S]*(?:限流|rate\s*limit)/i.test(message);
@@ -11589,6 +11595,11 @@ async function runCompletedNodeSideEffects(nodeId, payload, completionState, las
   if (nodeId === lastNodeId) {
     await appendAndBroadcastAccountRunRecord('success', completionState);
     await residentialProxySwitcher?.advanceAfterAccountSuccess?.({
+      nodeId,
+      payload,
+      state: completionState,
+    });
+    await successAccountPoolPruner?.removeCurrentAccountAfterSuccess?.({
       nodeId,
       payload,
       state: completionState,
@@ -13409,6 +13420,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   let gpcCheckoutRestartCount = 0;
   let plusCheckoutRestartCount = 0;
   let step4RestartCount = 0;
+  let step4AuthRestartFromStep2Count = 0;
   const nodeIdleRestartCounts = new Map();
   let currentStartNodeId = String(startNodeId || '').trim();
   let continueCurrentAttempt = continued;
@@ -13731,6 +13743,33 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
         if (isMail2925ThreadTerminatedError(err)) {
           await addLog(`节点 fetch-signup-code：2925 已切换账号并要求结束当前尝试：${getErrorMessage(err)}`, 'warn');
           throw err;
+        }
+        if (isStep4AuthRestartFromStep2Failure(err)) {
+          step4AuthRestartFromStep2Count += 1;
+          if (step4AuthRestartFromStep2Count > 2) {
+            await addLog(`节点 fetch-signup-code：认证页临时登录错误已连续触发 2 次，停止自动从步骤 2 重开。原因：${getErrorMessage(err)}`, 'error');
+            throw err;
+          }
+          const preservedState = await getState();
+          const preservedEmail = String(preservedState.email || '').trim();
+          const preservedPassword = String(preservedState.password || '').trim();
+          const emailSuffix = preservedEmail ? `当前邮箱：${preservedEmail}；` : '';
+          await addLog(
+            `节点 fetch-signup-code：检测到认证页临时登录错误，正在从步骤 2 重新开始当前轮（${step4AuthRestartFromStep2Count}/2）。${emailSuffix}原因：${getErrorMessage(err)}`,
+            'warn'
+          );
+          await invalidateDownstreamAfterAutoRunNodeRestart(getPreviousNodeId('submit-signup-email', await getState()) || 'open-chatgpt', {
+            logLabel: `节点 fetch-signup-code 检测到认证页临时登录错误后回到步骤 2 重试（第 ${step4AuthRestartFromStep2Count}/2 次）`,
+          });
+          const restorePayload = {};
+          if (preservedEmail) restorePayload.email = preservedEmail;
+          if (preservedPassword) restorePayload.password = preservedPassword;
+          if (Object.keys(restorePayload).length) {
+            await setState(restorePayload);
+          }
+          setRestartNode('submit-signup-email');
+          restartFromStep1WithCurrentEmail = true;
+          break;
         }
         step4RestartCount += 1;
         const isPhoneResendBanned = typeof phoneVerificationHelpers !== 'undefined'
@@ -14364,6 +14403,13 @@ const residentialProxySwitcher = self.MultiPageResidentialProxySwitcher?.createR
   addLog,
   buildLocalHelperEndpoint: (baseUrl, path) => buildHotmailLocalEndpoint(baseUrl, path),
   getState,
+});
+const successAccountPoolPruner = self.MultiPageSuccessAccountPoolPruner?.createSuccessAccountPoolPruner({
+  addLog,
+  broadcastDataUpdate,
+  getState,
+  setPersistentSettings,
+  setState,
 });
 const step10Executor = self.MultiPageBackgroundStep10?.createStep10Executor({
   addLog,

@@ -2789,7 +2789,10 @@ const ADD_EMAIL_PAGE_PATTERN = /add[\s-]*email|添加(?:电子邮件|邮箱)|要
 const STEP5_SUBMIT_ERROR_PATTERN = /无法根据该信息创建帐户|请重试|unable\s+to\s+create\s+(?:your\s+)?account|couldn'?t\s+create\s+(?:your\s+)?account|something\s+went\s+wrong|invalid\s+(?:birthday|birth|date)|生日|出生日期/i;
 const AUTH_TIMEOUT_ERROR_TITLE_PATTERN = /糟糕，出错了|something\s+went\s+wrong|oops/i;
 const AUTH_TIMEOUT_ERROR_DETAIL_PATTERN = /operation\s+timed\s+out|timed\s+out|请求超时|操作超时|failed\s+to\s+fetch|network\s+error|fetch\s+failed/i;
+const AUTH_TEMPORARY_LOGIN_ERROR_PATTERN = /登录时出现问题|请稍后重试|糟糕[!！]?[\s\S]{0,80}登录|problem\s+(?:logging|signing)\s+in|please\s+try\s+again\s+later/i;
+const AUTH_BACK_ACTION_PATTERN = /返回|back/i;
 const AUTH_ROUTE_ERROR_PATTERN = /405\s+method\s+not\s+allowed|route\s+error.*405|did\s+not\s+provide\s+an?\s+[`'"]?action|post\s+request\s+to\s+["']?\/email-verification/i;
+const STEP4_AUTH_RESTART_FROM_STEP2_ERROR_PREFIX = 'STEP4_AUTH_RESTART_FROM_STEP2::';
 const STEP4_405_RECOVERY_ERROR_PREFIX = 'STEP4_405_RECOVERY_LIMIT::';
 const STEP4_405_RECOVERY_LIMIT = 3;
 const SIGNUP_USER_ALREADY_EXISTS_ERROR_PREFIX = 'SIGNUP_USER_ALREADY_EXISTS::';
@@ -3609,6 +3612,34 @@ function getAuthRetryButton({ allowDisabled = false } = {}) {
     const text = getActionText(el);
     return /重试|try\s+again/i.test(text);
   }) || null;
+}
+
+function getAuthBackButton({ allowDisabled = false } = {}) {
+  const candidates = document.querySelectorAll('button, [role="button"], a[href]');
+  return Array.from(candidates).find((el) => {
+    if (!isVisibleElement(el) || (!allowDisabled && !isActionEnabled(el))) return false;
+    return AUTH_BACK_ACTION_PATTERN.test(getActionText(el));
+  }) || null;
+}
+
+function getStep4AuthRestartFromStep2PageState() {
+  const text = getPageTextSnapshot();
+  const title = document.title || '';
+  const temporaryLoginErrorMatched = AUTH_TEMPORARY_LOGIN_ERROR_PATTERN.test(text)
+    || AUTH_TEMPORARY_LOGIN_ERROR_PATTERN.test(title);
+  if (!temporaryLoginErrorMatched) {
+    return null;
+  }
+
+  const backButton = getAuthBackButton({ allowDisabled: true });
+  return {
+    state: 'auth_restart_from_step2',
+    path: location.pathname || '',
+    url: location.href,
+    backButton,
+    backEnabled: backButton ? isActionEnabled(backButton) : false,
+    temporaryLoginErrorMatched,
+  };
 }
 
 function getAuthTimeoutErrorPageState(options = {}) {
@@ -4583,6 +4614,18 @@ function createStep6AddEmailSuccessResult(snapshot, options = {}) {
   };
 }
 
+function createStep6AddPhoneSuccessResult(snapshot, options = {}) {
+  return {
+    ...createStep6SuccessResult(snapshot, {
+      ...options,
+      via: options.via || 'add_phone_page',
+      loginVerificationRequestedAt: null,
+      skipLoginVerificationStep: true,
+    }),
+    addPhonePage: true,
+  };
+}
+
 function createStep6RecoverableResult(reason, snapshot, options = {}) {
   return {
     step6Outcome: 'recoverable',
@@ -4883,6 +4926,11 @@ function inspectSignupVerificationState() {
     };
   }
 
+  const restartFromStep2State = getStep4AuthRestartFromStep2PageState();
+  if (restartFromStep2State) {
+    return restartFromStep2State;
+  }
+
   if (isSignupPasswordErrorPage()) {
     const timeoutPage = getSignupPasswordTimeoutErrorPageState();
     return {
@@ -4936,6 +4984,7 @@ async function waitForSignupVerificationTransition(timeout = 5000) {
       || snapshot.state === 'logged_in_home'
       || snapshot.state === 'verification'
       || snapshot.state === 'error'
+      || snapshot.state === 'auth_restart_from_step2'
       || snapshot.state === 'email_exists'
     ) {
       return snapshot;
@@ -5039,6 +5088,10 @@ async function prepareSignupVerificationFlow(payload = {}, timeout = 30000) {
 
     if (snapshot.state === 'email_exists') {
       throw new Error('当前邮箱已存在，需要重新开始新一轮。');
+    }
+
+    if (snapshot.state === 'auth_restart_from_step2') {
+      throw new Error(`${STEP4_AUTH_RESTART_FROM_STEP2_ERROR_PREFIX}步骤 4：检测到认证页临时登录错误（糟糕，登录时出现问题，请稍后重试），将从步骤 2 重新开始当前账号。URL: ${snapshot.url || location.href}`);
     }
 
     if (snapshot.state === 'error') {
@@ -5797,6 +5850,11 @@ async function step6ChooseExistingAccount(payload, snapshot) {
   if (nextSnapshot.state === 'add_email_page') {
     return createStep6AddEmailSuccessResult(nextSnapshot, {
       via: 'choose_account_add_email_page',
+    });
+  }
+  if (nextSnapshot.state === 'add_phone_page') {
+    return createStep6AddPhoneSuccessResult(nextSnapshot, {
+      via: 'choose_account_add_phone_page',
     });
   }
   if (nextSnapshot.state === 'login_timeout_error_page') {
