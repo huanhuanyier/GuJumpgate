@@ -332,7 +332,11 @@
   }
 
   async function requestAdditionalSms(state = {}, activation, deps = {}) {
-    return setActivationStatus(state, activation, 3, deps);
+    const normalizedActivation = normalizeActivation(activation, activation);
+    if (!normalizedActivation) {
+      throw new Error('缺少 SMSBower 手机号接码订单。');
+    }
+    return 'SMSBower keeps the current activation; no additional SMS API call is required.';
   }
 
   function extractVerificationCode(rawCodeOrText) {

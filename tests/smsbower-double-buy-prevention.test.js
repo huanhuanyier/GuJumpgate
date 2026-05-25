@@ -60,3 +60,28 @@ test('SMSBower does not call getNumber after getNumberV2 returns wrapped activat
   assert.equal(activation.phoneNumber, '+966501234567');
   assert.deepEqual(calls, ['getNumberV2']);
 });
+
+test('SMSBower additional SMS request does not call setStatus 3 and create a second order', async () => {
+  const smsBower = loadSmsBowerProvider();
+  const calls = [];
+  const provider = smsBower.createProvider({
+    fetchImpl: async (url) => {
+      const parsedUrl = new URL(url);
+      calls.push({
+        action: parsedUrl.searchParams.get('action'),
+        status: parsedUrl.searchParams.get('status'),
+      });
+      return createTextResponse('ACCESS_READY');
+    },
+  });
+
+  await provider.requestAdditionalSms({
+    smsBowerApiKey: 'key',
+  }, {
+    activationId: 'act-existing',
+    phoneNumber: '+966501234567',
+    provider: 'smsbower',
+  });
+
+  assert.deepEqual(calls, []);
+});

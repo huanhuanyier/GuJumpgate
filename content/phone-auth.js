@@ -373,7 +373,7 @@
         return true;
       }
 
-      return Boolean(getSelectedCountryOption());
+      return false;
     }
 
     function getAddPhoneSubmitButton() {
