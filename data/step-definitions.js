@@ -8,6 +8,8 @@
   const PLUS_PAYMENT_STEP_KEY = 'paypal-approve';
   const LOCAL_CPA_JSON_NO_RT_PANEL_MODE = 'local-cpa-json-no-rt';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH = 'oauth';
+  const PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH = 'sms_oauth';
+  const PLUS_ACCOUNT_ACCESS_STRATEGY_PHONE_BIND_OAUTH = 'phone_bind_oauth';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION = 'sub2api_codex_session';
   const PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION = 'cpa_codex_session';
   const SIGNUP_METHOD_EMAIL = 'email';
@@ -38,6 +40,7 @@
     { id: 9, order: 90, key: 'plus-checkout-return', title: '订阅回跳确认', sourceId: 'plus-checkout', driverId: 'content/plus-checkout', command: 'plus-checkout-return' },
   ];
   const PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS = PLUS_PAYPAL_PREFIX_STEP_DEFINITIONS.slice(0, 6);
+  const PLUS_PAYPAL_SMS_OAUTH_PREFIX_STEP_DEFINITIONS = NORMAL_PREFIX_STEP_DEFINITIONS.slice(0, 7);
   const LOCAL_CPA_JSON_NO_RT_EXPORT_STEP_DEFINITION = {
     id: 7,
     order: 70,
@@ -140,6 +143,12 @@
 
   function normalizePlusAccountAccessStrategy(value = '') {
     const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH) {
+      return PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH;
+    }
+    if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_PHONE_BIND_OAUTH) {
+      return PLUS_ACCOUNT_ACCESS_STRATEGY_PHONE_BIND_OAUTH;
+    }
     if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
       return PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION;
     }
@@ -161,6 +170,22 @@
       return createCpaSessionImportTail;
     }
     return null;
+  }
+
+  function shouldUseSmsOauthPhoneFlow(options = {}) {
+    if (!isPlusModeEnabled(options)) {
+      return false;
+    }
+    const paymentMethod = normalizePlusPaymentMethod(options?.plusPaymentMethod || options?.paymentMethod);
+    if (paymentMethod !== PLUS_PAYMENT_METHOD_PAYPAL) {
+      return false;
+    }
+    return normalizePlusAccountAccessStrategy(options?.plusAccountAccessStrategy) === PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH;
+  }
+
+  function shouldUsePhoneBindOauthFlow(options = {}) {
+    return isPlusModeEnabled(options)
+      && normalizePlusAccountAccessStrategy(options?.plusAccountAccessStrategy) === PLUS_ACCOUNT_ACCESS_STRATEGY_PHONE_BIND_OAUTH;
   }
 
   function createOpenAiSteps(prefixSteps, startId, startOrder, signupMethod = SIGNUP_METHOD_EMAIL, options = {}) {
@@ -190,8 +215,9 @@
           { id: id + 3, order: order + 30, key: 'fetch-bind-email-code', title: '获取绑定邮箱验证码', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'fetch-bind-email-code', mailRuleId: 'openai-login-code' },
           { id: id + 4, order: order + 40, key: 'relogin-bound-email', title: '绑定邮箱后刷新 OAuth 并登录（邮箱）', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'oauth-login' },
           { id: id + 5, order: order + 50, key: 'fetch-bound-email-login-code', title: '获取登录验证码（邮箱）', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'submit-verification-code', mailRuleId: 'openai-login-code' },
-          { id: id + 6, order: order + 60, key: 'confirm-oauth', title: '自动确认 OAuth', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'confirm-oauth' },
-          { id: id + 7, order: order + 70, key: 'platform-verify', title: '平台回调验证', sourceId: 'platform-panel', driverId: 'content/platform-panel', command: 'platform-verify' },
+          { id: id + 6, order: order + 60, key: 'post-bound-email-phone-verification', title: '手机号验证', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'post-login-phone-verification' },
+          { id: id + 7, order: order + 70, key: 'confirm-oauth', title: '自动确认 OAuth', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'confirm-oauth' },
+          { id: id + 8, order: order + 80, key: 'platform-verify', title: '平台回调验证', sourceId: 'platform-panel', driverId: 'content/platform-panel', command: 'platform-verify' },
         ];
       }
       return [
@@ -205,8 +231,9 @@
 
     return [
       ...commonStart,
-      { id: id + 2, order: order + 20, key: 'confirm-oauth', title: '自动确认 OAuth', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'confirm-oauth' },
-      { id: id + 3, order: order + 30, key: 'platform-verify', title: '平台回调验证', sourceId: 'platform-panel', driverId: 'content/platform-panel', command: 'platform-verify' },
+      { id: id + 2, order: order + 20, key: 'post-login-phone-verification', title: '手机号验证', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'post-login-phone-verification' },
+      { id: id + 3, order: order + 30, key: 'confirm-oauth', title: '自动确认 OAuth', sourceId: 'openai-auth', driverId: 'content/signup-page', command: 'confirm-oauth' },
+      { id: id + 4, order: order + 40, key: 'platform-verify', title: '平台回调验证', sourceId: 'platform-panel', driverId: 'content/platform-panel', command: 'platform-verify' },
     ];
   }
 
@@ -242,6 +269,12 @@
   const PLUS_PAYPAL_PHONE_STEP_DEFINITIONS = createOpenAiSteps(PLUS_PAYPAL_PREFIX_STEP_DEFINITIONS, 10, 100, SIGNUP_METHOD_PHONE);
   const PLUS_PAYPAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS = createOpenAiSteps(PLUS_PAYPAL_PREFIX_STEP_DEFINITIONS, 10, 100, SIGNUP_METHOD_PHONE, { phoneSignupReloginAfterBindEmailEnabled: true });
   const PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS = createHostedCheckoutSteps(PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS, 7, 70, SIGNUP_METHOD_EMAIL);
+  const PLUS_PAYPAL_SMS_OAUTH_STEP_DEFINITIONS = createHostedCheckoutSteps(
+    PLUS_PAYPAL_SMS_OAUTH_PREFIX_STEP_DEFINITIONS,
+    8,
+    80,
+    SIGNUP_METHOD_PHONE
+  );
   const PLUS_PAYPAL_HOSTED_CHECKOUT_SUB2API_SESSION_STEP_DEFINITIONS = createHostedCheckoutSteps(
     PLUS_PAYPAL_HOSTED_CHECKOUT_PREFIX_STEP_DEFINITIONS,
     7,
@@ -342,7 +375,9 @@
 
   function getOpenAiModeStepDefinitions(options = {}) {
     const panelMode = String(options?.panelMode || '').trim().toLowerCase();
-    const signupMethod = getResolvedSignupMethod(options);
+    const signupMethod = shouldUsePhoneBindOauthFlow(options)
+      ? SIGNUP_METHOD_EMAIL
+      : getResolvedSignupMethod(options);
     const reloginAfterBindEmail = signupMethod === SIGNUP_METHOD_PHONE
       && isPhoneSignupReloginAfterBindEmailEnabled(options);
     if (panelMode === LOCAL_CPA_JSON_NO_RT_PANEL_MODE) {
@@ -361,6 +396,9 @@
     }
     const paymentMethod = normalizePlusPaymentMethod(options?.plusPaymentMethod || options?.paymentMethod);
     const plusAccountAccessStrategy = normalizePlusAccountAccessStrategy(options?.plusAccountAccessStrategy);
+    if (shouldUseSmsOauthPhoneFlow(options)) {
+      return PLUS_PAYPAL_SMS_OAUTH_STEP_DEFINITIONS;
+    }
     if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
       if (signupMethod === SIGNUP_METHOD_PHONE) {
         return reloginAfterBindEmail
@@ -436,7 +474,9 @@
     if (isPlusModeEnabled(options) && step.key === PLUS_PAYMENT_STEP_KEY) {
       return getOpenAiPlusPaymentStepTitle(options) || step.title;
     }
-    const signupMethod = getResolvedSignupMethod(options);
+    const signupMethod = shouldUsePhoneBindOauthFlow(options)
+      ? SIGNUP_METHOD_EMAIL
+      : getResolvedSignupMethod(options);
     if (signupMethod === SIGNUP_METHOD_PHONE && PHONE_SIGNUP_TITLE_OVERRIDES[step.key]) {
       return PHONE_SIGNUP_TITLE_OVERRIDES[step.key];
     }
@@ -451,6 +491,7 @@
           ...NORMAL_STEP_DEFINITIONS,
           ...NORMAL_PHONE_STEP_DEFINITIONS,
           ...NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
+          ...PLUS_PAYPAL_SMS_OAUTH_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_SUB2API_SESSION_STEP_DEFINITIONS,
           ...PLUS_PAYPAL_HOSTED_CHECKOUT_CPA_SESSION_STEP_DEFINITIONS,
@@ -650,9 +691,12 @@
     NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
     PLUS_STEP_DEFINITIONS: PLUS_PAYPAL_STEP_DEFINITIONS,
     PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH,
+    PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH,
+    PLUS_ACCOUNT_ACCESS_STRATEGY_PHONE_BIND_OAUTH,
     PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
     PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
     PLUS_PAYPAL_STEP_DEFINITIONS,
+    PLUS_PAYPAL_SMS_OAUTH_STEP_DEFINITIONS,
     PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS,
     PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS,
     PLUS_PAYPAL_PHONE_STEP_DEFINITIONS,

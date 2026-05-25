@@ -152,6 +152,18 @@
       };
     }
 
+    function resolveBindEmailTarget(state = {}, visibleStep = 0) {
+      const email = String(
+        state?.email
+        || state?.registrationEmailState?.current
+        || ''
+      ).trim();
+      if (!email) {
+        throw new Error(`步骤 ${visibleStep || 0}：缺少当前注册邮箱，无法在添加邮箱页继续。`);
+      }
+      return email;
+    }
+
     async function getLoginAuthStateFromContent(visibleStep, options = {}) {
       if (typeof sendToContentScriptResilient !== 'function') {
         return {};
@@ -195,9 +207,11 @@
       }
 
       const latestState = typeof getState === 'function' ? await getState() : state;
-      const resolvedEmail = await resolveSignupEmailForFlow(latestState, {
-        preserveAccountIdentity: true,
-      });
+      const resolvedEmail = activeFetchLoginCodeStepKey === 'bind-email'
+        ? resolveBindEmailTarget(latestState, visibleStep)
+        : await resolveSignupEmailForFlow(latestState, {
+          preserveAccountIdentity: true,
+        });
       await addLog(`步骤 ${visibleStep}：检测到添加邮箱页，正在添加邮箱 ${resolvedEmail} 并进入邮箱验证码页...`);
 
       const timeoutMs = typeof getOAuthFlowStepTimeoutMs === 'function'

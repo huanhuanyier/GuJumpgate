@@ -120,6 +120,10 @@
           usedAt: Math.max(0, Number(usage.usedAt) || 0),
           lastAttemptAt: Math.max(0, Number(usage.lastAttemptAt) || 0),
           lastError: normalizeText(usage.lastError),
+          enabled: usage.enabled !== false,
+          disabledReason: normalizeText(usage.disabledReason),
+          disabledAt: Math.max(0, Number(usage.disabledAt) || 0),
+          failureCount: Math.max(0, Math.floor(Number(usage.failureCount) || 0)),
         }];
       }).filter(([key]) => Boolean(key)));
     }
@@ -141,6 +145,10 @@
           used: Math.max(0, Math.floor(Number(itemUsage.useCount) || 0)) > 0,
           lastAttemptAt: Math.max(0, Number(itemUsage.lastAttemptAt) || 0),
           lastError: normalizeText(itemUsage.lastError),
+          enabled: itemUsage.enabled !== false,
+          disabledReason: normalizeText(itemUsage.disabledReason),
+          disabledAt: Math.max(0, Number(itemUsage.disabledAt) || 0),
+          failureCount: Math.max(0, Math.floor(Number(itemUsage.failureCount) || 0)),
         };
       });
     }
@@ -150,6 +158,8 @@
       return getEntriesWithState(entries).filter((entry) => {
         const matchesFilter = (() => {
           switch (filterMode) {
+            case 'enabled': return Boolean(entry.enabled);
+            case 'disabled': return !entry.enabled;
             case 'current': return Boolean(entry.current);
             case 'used': return Boolean(entry.used);
             case 'unused': return !entry.used;
@@ -166,8 +176,10 @@
         return [
           entry.phone,
           entry.verificationUrl,
+          entry.enabled ? 'enabled 启用' : 'disabled 禁用',
           entry.current ? 'current 当前' : '',
           entry.used ? 'used 已用' : 'unused 未用',
+          entry.disabledReason ? `disabledReason ${entry.disabledReason}` : '',
           entry.lastError ? `error 异常 ${entry.lastError}` : '',
         ].join(' ').toLowerCase().includes(normalizedSearch);
       });
@@ -194,8 +206,9 @@
     function updateControls(entries = renderedEntries) {
       const entriesWithState = getEntriesWithState(entries);
       const usedCount = entriesWithState.filter((entry) => entry.useCount > 0).length;
+      const disabledCount = entriesWithState.filter((entry) => !entry.enabled).length;
       if (dom.btnHostedSmsPoolClearUsed) {
-        dom.btnHostedSmsPoolClearUsed.disabled = loading || usedCount === 0;
+        dom.btnHostedSmsPoolClearUsed.disabled = loading || (usedCount === 0 && disabledCount === 0);
       }
       if (dom.btnHostedSmsPoolDeleteAll) {
         dom.btnHostedSmsPoolDeleteAll.disabled = loading || entriesWithState.length === 0;
@@ -218,8 +231,9 @@
       }
 
       const usedCount = entriesWithState.filter((entry) => entry.useCount > 0).length;
+      const disabledCount = entriesWithState.filter((entry) => !entry.enabled).length;
       const totalUseCount = entriesWithState.reduce((sum, entry) => sum + Math.max(0, Number(entry.useCount) || 0), 0);
-      dom.hostedSmsPoolSummary.textContent = `已加载 ${entriesWithState.length} 个号码，${usedCount} 个有使用记录，累计使用 ${totalUseCount} 次。`;
+      dom.hostedSmsPoolSummary.textContent = `已加载 ${entriesWithState.length} 个号码，${usedCount} 个有使用记录，${disabledCount} 个已禁用，累计使用 ${totalUseCount} 次。`;
 
       const visibleEntries = getFilteredEntries(renderedEntries);
       if (!visibleEntries.length) {
@@ -230,7 +244,7 @@
 
       for (const entry of visibleEntries) {
         const item = document.createElement('div');
-        item.className = `luckmail-item${entry.current ? ' is-current' : ''}`;
+        item.className = `luckmail-item${entry.current ? ' is-current' : ''}${entry.enabled ? '' : ' is-disabled'}`;
         const localPhone = formatPayPalLocalPhone(entry.phone);
         item.innerHTML = `
           <div class="luckmail-item-main">
@@ -251,10 +265,14 @@
             <div class="luckmail-item-details mono">${helpers.escapeHtml?.(entry.verificationUrl) || entry.verificationUrl}</div>
             <div class="luckmail-item-meta">
               ${entry.current ? '<span class="luckmail-tag current">当前</span>' : ''}
+              ${entry.enabled ? '<span class="luckmail-tag active">启用中</span>' : '<span class="luckmail-tag disabled">已禁用</span>'}
               <span class="luckmail-tag active">使用 ${Math.max(0, Number(entry.useCount) || 0)} 次</span>
+              ${entry.failureCount > 0 ? `<span class="luckmail-tag used">失败 ${Math.max(0, Number(entry.failureCount) || 0)} 次</span>` : ''}
             </div>
+            ${entry.disabledReason ? `<div class="hosted-sms-pool-disabled-reason">${helpers.escapeHtml?.(entry.disabledReason) || entry.disabledReason}</div>` : ''}
           </div>
           <div class="luckmail-item-actions">
+            <button class="btn btn-outline btn-xs" type="button" data-action="${entry.enabled ? 'disable' : 'enable'}">${entry.enabled ? '禁用' : '启用'}</button>
             <button class="btn btn-outline btn-xs" type="button" data-action="increment-usage">次数 +1</button>
             <button class="btn btn-outline btn-xs" type="button" data-action="reset-usage">清零</button>
             <button class="btn btn-outline btn-xs" type="button" data-action="delete">删除</button>
@@ -266,6 +284,42 @@
           helpers.showToast?.('号码已复制', 'success', 1600);
         });
 
+        item.querySelector('[data-action="disable"]')?.addEventListener('click', async () => {
+          await patchPool(({ entries: entriesList, usage }) => {
+            const nextUsage = { ...usage };
+            nextUsage[entry.key] = {
+              ...(nextUsage[entry.key] || {}),
+              useCount: Math.max(0, Number(nextUsage[entry.key]?.useCount) || 0),
+              usedAt: Math.max(0, Number(nextUsage[entry.key]?.usedAt) || 0),
+              lastAttemptAt: Math.max(0, Number(nextUsage[entry.key]?.lastAttemptAt) || 0),
+              lastError: normalizeText(nextUsage[entry.key]?.lastError),
+              enabled: false,
+              disabledReason: '手动禁用',
+              disabledAt: Date.now(),
+              failureCount: Math.max(0, Math.floor(Number(nextUsage[entry.key]?.failureCount) || 0)),
+            };
+            return { entries: entriesList, usage: nextUsage };
+          });
+        });
+
+        item.querySelector('[data-action="enable"]')?.addEventListener('click', async () => {
+          await patchPool(({ entries: entriesList, usage }) => {
+            const nextUsage = { ...usage };
+            nextUsage[entry.key] = {
+              ...(nextUsage[entry.key] || {}),
+              useCount: Math.max(0, Number(nextUsage[entry.key]?.useCount) || 0),
+              usedAt: Math.max(0, Number(nextUsage[entry.key]?.usedAt) || 0),
+              lastAttemptAt: Math.max(0, Number(nextUsage[entry.key]?.lastAttemptAt) || 0),
+              lastError: normalizeText(nextUsage[entry.key]?.lastError),
+              enabled: true,
+              disabledReason: '',
+              disabledAt: 0,
+              failureCount: 0,
+            };
+            return { entries: entriesList, usage: nextUsage };
+          });
+        });
+
         item.querySelector('[data-action="increment-usage"]')?.addEventListener('click', async () => {
           await patchPool(({ entries: entriesList, usage }) => {
             const nextUsage = { ...usage };
@@ -275,6 +329,10 @@
               usedAt: Date.now(),
               lastAttemptAt: Math.max(0, Number(nextUsage[entry.key]?.lastAttemptAt) || 0),
               lastError: normalizeText(nextUsage[entry.key]?.lastError),
+              enabled: nextUsage[entry.key]?.enabled !== false,
+              disabledReason: normalizeText(nextUsage[entry.key]?.disabledReason),
+              disabledAt: Math.max(0, Number(nextUsage[entry.key]?.disabledAt) || 0),
+              failureCount: Math.max(0, Math.floor(Number(nextUsage[entry.key]?.failureCount) || 0)),
             };
             return { entries: entriesList, usage: nextUsage };
           });
@@ -288,6 +346,11 @@
               useCount: 0,
               usedAt: 0,
               lastError: '',
+              lastAttemptAt: 0,
+              enabled: nextUsage[entry.key]?.enabled !== false,
+              disabledReason: normalizeText(nextUsage[entry.key]?.disabledReason),
+              disabledAt: Math.max(0, Number(nextUsage[entry.key]?.disabledAt) || 0),
+              failureCount: 0,
             };
             return { entries: entriesList, usage: nextUsage };
           });
@@ -397,7 +460,19 @@
         confirmLabel: '清空次数',
       });
       if (!confirmed) return;
-      await patchPool(({ entries }) => ({ entries, usage: {} }));
+      await patchPool(({ entries, usage }) => ({
+        entries,
+        usage: Object.fromEntries(Object.entries(normalizeUsage(usage)).map(([key, item]) => [key, {
+          enabled: item.enabled !== false,
+          disabledReason: normalizeText(item.disabledReason),
+          disabledAt: Math.max(0, Number(item.disabledAt) || 0),
+          useCount: 0,
+          usedAt: 0,
+          lastAttemptAt: 0,
+          lastError: '',
+          failureCount: 0,
+        }])),
+      }));
     }
 
     async function deleteAll() {
