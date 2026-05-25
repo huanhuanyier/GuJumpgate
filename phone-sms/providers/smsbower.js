@@ -197,9 +197,30 @@
         phoneNumber = match[2];
       }
     } else if (record && typeof record === 'object' && !Array.isArray(record)) {
-      activationId = String(record.activationId ?? record.id ?? '').trim();
-      phoneNumber = String(record.phoneNumber ?? record.phone ?? '').trim();
-      activationCost = record.activationCost ?? record.price ?? record.cost;
+      const data = record.data && typeof record.data === 'object' && !Array.isArray(record.data)
+        ? record.data
+        : {};
+      activationId = String(
+        record.activationId
+        ?? record.id
+        ?? record.activation
+        ?? record.tzid
+        ?? data.activationId
+        ?? data.id
+        ?? data.activation
+        ?? data.tzid
+        ?? ''
+      ).trim();
+      phoneNumber = String(
+        record.phoneNumber
+        ?? record.phone
+        ?? record.number
+        ?? data.phoneNumber
+        ?? data.phone
+        ?? data.number
+        ?? ''
+      ).trim();
+      activationCost = record.activationCost ?? record.price ?? record.cost ?? data.activationCost ?? data.price ?? data.cost;
     }
 
     if (!activationId || !phoneNumber) return null;

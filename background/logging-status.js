@@ -63,13 +63,48 @@
       };
     }
 
+    function isStorageQuotaExceededError(error) {
+      const message = String(error?.message || error || '');
+      return /storage\s+quota|quota\s+bytes\s+exceeded|values\s+were\s+not\s+stored|QUOTA_BYTES/i.test(message);
+    }
+
+    function trimLogsForQuotaRetry(logs = [], maxLogs = 200) {
+      const normalizedMaxLogs = Math.max(20, Math.floor(Number(maxLogs) || 200));
+      return (Array.isArray(logs) ? logs : []).slice(-normalizedMaxLogs);
+    }
+
+    async function persistLogsWithQuotaRecovery(logs) {
+      try {
+        await setState({ logs });
+        return logs;
+      } catch (error) {
+        if (!isStorageQuotaExceededError(error)) {
+          throw error;
+        }
+        let lastError = error;
+        for (const maxLogs of [200, 50, 1]) {
+          const trimmedLogs = trimLogsForQuotaRetry(logs, maxLogs);
+          try {
+            await setState({ logs: trimmedLogs });
+            return trimmedLogs;
+          } catch (retryError) {
+            if (!isStorageQuotaExceededError(retryError)) {
+              throw retryError;
+            }
+            lastError = retryError;
+          }
+        }
+        throw lastError;
+      }
+    }
+
     async function addLog(message, level = 'info', options = {}) {
       const state = await getState();
       const logs = state.logs || [];
       const entry = buildLogEntry(message, level, options);
       logs.push(entry);
       if (logs.length > 500) logs.splice(0, logs.length - 500);
-      await setState({ logs });
+      await persistLogsWithQuotaRecovery(logs);
       chrome.runtime.sendMessage({ type: 'LOG_ENTRY', payload: entry }).catch(() => { });
     }
 
@@ -236,12 +271,14 @@
       getSourceLabel,
       hasSavedNodeProgress,
       hasSavedProgress,
+      isStorageQuotaExceededError,
       isLegacyStep9RecoverableAuthError,
       isRestartCurrentAttemptError,
       isSignupUserAlreadyExistsFailure,
       isStep9RecoverableAuthError,
       isStepDoneStatus,
       isVerificationMailPollingError,
+      trimLogsForQuotaRetry,
       setNodeStatus,
     };
   }

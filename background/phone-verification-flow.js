@@ -490,7 +490,10 @@
       if (!text) {
         return false;
       }
-      return /phone_max_usage_exceeded|phone_number_in_use|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts|phone\s+number\s+is\s+already\s+(?:in\s+use|linked|registered)|phone\s+number\s+has\s+already\s+been\s+used|already\s+associated\s+with\s+another\s+account|not\s+eligible\s+to\s+be\s+used|cannot\s+be\s+used\s+for\s+verification|号码.*(?:已|被).*(?:使用|占用|绑定|注册)|手机号.*(?:已|被).*(?:使用|占用|绑定|注册)|该手机号.*(?:已|被).*(?:使用|占用|绑定|注册)/i.test(text);
+      if (/too\s+many\s+(?:phone\s+)?verification\s+requests|requested\s+(?:phone\s+)?verification\s+too\s+many\s+times|你请求手机验证的次数过多。请稍后再试。|你请求手机验证的次数过多|请求手机验证的次数过多/i.test(text)) {
+        return true;
+      }
+      return /phone_max_usage_exceeded|phone_number_in_use|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts|phone\s+number\s+is\s+already\s+(?:in\s+use|linked|registered)|phone\s+number\s+has\s+already\s+been\s+used|already\s+associated\s+with\s+another\s+account|not\s+eligible\s+to\s+be\s+used|cannot\s+be\s+used\s+for\s+verification|电话号码已关联|电话号码已被占用|该电话号码已经被占用|号码.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|电话(?:号码)?.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|手机号.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|该手机号.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|可关联.*最多账户/i.test(text);
     }
 
     function isPhoneNumberInvalidError(value) {
@@ -4975,7 +4978,7 @@
         if (isPhoneMaxUsageExceededFlowError(error)) {
           return {
             hasError: true,
-            reason: 'phone_max_usage_exceeded',
+            reason: isPhoneNumberUsedError(error.message) ? 'phone_number_used' : 'phone_max_usage_exceeded',
             message: error.message,
           };
         }
@@ -4990,7 +4993,10 @@
 
     function usePageProbeForPhoneResend(state = {}) {
       const provider = normalizePhoneSmsProvider(state?.phoneSmsProvider || DEFAULT_PHONE_SMS_PROVIDER);
-      return provider === PHONE_SMS_PROVIDER_HERO || provider === PHONE_SMS_PROVIDER_NEXSMS || provider === PHONE_SMS_PROVIDER_5SIM;
+      return provider === PHONE_SMS_PROVIDER_HERO
+        || provider === PHONE_SMS_PROVIDER_NEXSMS
+        || provider === PHONE_SMS_PROVIDER_5SIM
+        || provider === PHONE_SMS_PROVIDER_SMSBOWER;
     }
 
     async function persistCurrentActivation(activation) {
@@ -5669,6 +5675,9 @@
             onStatus: async ({ elapsedMs, pollCount, statusText }) => {
               if (/^STATUS_(WAIT_CODE|WAIT_RETRY|WAIT_RESEND)(?::.+)?$/i.test(String(statusText || '').trim())) {
                 const pageError = await checkPhoneResendPageError(tabId, state);
+                if (pageError?.reason === 'phone_number_used') {
+                  throw buildPhoneMaxUsageExceededError(pageError.message);
+                }
                 if (pageError?.reason === 'resend_phone_banned') {
                   throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${pageError.message || 'OpenAI 无法向此手机号发送短信。'}`);
                 }

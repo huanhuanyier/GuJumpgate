@@ -22,7 +22,8 @@
     const PHONE_RESEND_THROTTLED_ERROR_PREFIX = 'PHONE_RESEND_THROTTLED::';
     const PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX = 'PHONE_RESEND_BANNED_NUMBER::';
     const PHONE_RESEND_SERVER_ERROR_PREFIX = 'PHONE_RESEND_SERVER_ERROR::';
-    const PHONE_MAX_USAGE_EXCEEDED_PATTERN = /phone_max_usage_exceeded/i;
+    const PHONE_NUMBER_USED_PATTERN = /phone_max_usage_exceeded|phone_number_in_use|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts|phone\s+number\s+is\s+already\s+(?:in\s+use|linked|registered)|phone\s+number\s+has\s+already\s+been\s+used|already\s+associated\s+with\s+another\s+account|not\s+eligible\s+to\s+be\s+used|cannot\s+be\s+used\s+for\s+verification|电话号码已关联|电话号码已被占用|该电话号码已经被占用|号码.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|电话(?:号码)?.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|手机号.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|该手机号.*(?:已|被).*(?:使用|占用|绑定|注册|关联)|可关联.*最多账户/i;
+    const PHONE_VERIFICATION_REQUEST_LIMIT_PATTERN = /too\s+many\s+(?:phone\s+)?verification\s+requests|requested\s+(?:phone\s+)?verification\s+too\s+many\s+times|你请求手机验证的次数过多。请稍后再试。|你请求手机验证的次数过多|请求手机验证的次数过多/i;
     const PHONE_ROUTE_405_RECOVERY_FAILED_ERROR_PREFIX = 'PHONE_ROUTE_405_RECOVERY_FAILED::';
     const PHONE_ROUTE_405_RECOVERY_COOLDOWN_MS = 6000;
     const PHONE_RESEND_ROUTE_405_MAX_RECOVERIES = 2;
@@ -491,6 +492,26 @@
       return preferred || messages[0] || '';
     }
 
+    function getPhoneNumberUsedErrorText() {
+      const addPhoneError = getAddPhoneErrorText();
+      if (addPhoneError && (PHONE_NUMBER_USED_PATTERN.test(addPhoneError) || PHONE_VERIFICATION_REQUEST_LIMIT_PATTERN.test(addPhoneError))) {
+        return addPhoneError;
+      }
+
+      const pageSnapshot = String(getPageTextSnapshot?.() || '').replace(/\s+/g, ' ').trim();
+      if (pageSnapshot && (PHONE_NUMBER_USED_PATTERN.test(pageSnapshot) || PHONE_VERIFICATION_REQUEST_LIMIT_PATTERN.test(pageSnapshot))) {
+        const requestLimit = pageSnapshot.match(/too\s+many\s+(?:phone\s+)?verification\s+requests[^.。！？]*[.。！？]?|requested\s+(?:phone\s+)?verification\s+too\s+many\s+times[^.。！？]*[.。！？]?|你请求手机验证的次数过多。请稍后再试。|你请求手机验证的次数过多[^。！？]*[。！？]?|请求手机验证的次数过多[^。！？]*[。！？]?/i);
+        if (requestLimit) {
+          return String(requestLimit[0]).trim();
+        }
+        const concise = pageSnapshot.match(
+          /phone_number_in_use|phone_max_usage_exceeded|already\s+linked\s+to\s+the\s+maximum\s+number\s+of\s+accounts[^.。!?]*[.。!?]?|phone\s+number\s+is\s+already\s+(?:in\s+use|linked|registered)[^.。!?]*[.。!?]?|phone\s+number\s+has\s+already\s+been\s+used[^.。!?]*[.。!?]?|already\s+associated\s+with\s+another\s+account[^.。!?]*[.。!?]?|号码[^。!?]*(?:已|被)[^。!?]*(?:使用|占用|绑定|注册|关联)[^。!?]*[。!?]?|电话(?:号码)?[^。!?]*(?:已|被)[^。!?]*(?:使用|占用|绑定|注册|关联)[^。!?]*[。!?]?|手机号[^。!?]*(?:已|被)[^。!?]*(?:使用|占用|绑定|注册|关联)[^。!?]*[。!?]?|可关联[^。!?]*最多账户[^。!?]*[。!?]?/i
+        );
+        return String(concise?.[0] || pageSnapshot).trim();
+      }
+      return '';
+    }
+
     function getPhoneVerificationInlineMessages() {
       const form = getPhoneVerificationForm();
       if (!form) {
@@ -567,12 +588,12 @@
     }
 
     function checkPhoneResendError() {
-      const maxUsageText = getAddPhoneErrorText();
-      if (maxUsageText && PHONE_MAX_USAGE_EXCEEDED_PATTERN.test(maxUsageText)) {
+      const usedNumberText = getPhoneNumberUsedErrorText();
+      if (usedNumberText) {
         return {
           hasError: true,
-          reason: 'phone_max_usage_exceeded',
-          message: maxUsageText,
+          reason: 'phone_number_used',
+          message: usedNumberText,
           url: location.href,
         };
       }
@@ -816,6 +837,15 @@
           };
         }
 
+        const usedNumberText = getPhoneNumberUsedErrorText();
+        if (usedNumberText) {
+          return {
+            invalidCode: true,
+            errorText: usedNumberText,
+            url: location.href,
+          };
+        }
+
         if (isConsentReady()) {
           return {
             success: true,
@@ -916,6 +946,10 @@
             await recoverRoute405WithinResend();
             continue;
           }
+          const usedNumberText = getPhoneNumberUsedErrorText();
+          if (usedNumberText) {
+            throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${usedNumberText}`);
+          }
           const bannedNumberText = getPhoneResendBannedNumberText();
           if (bannedNumberText) {
             throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${bannedNumberText}`);
@@ -959,6 +993,10 @@
               await recoverRoute405WithinResend();
               continue;
             }
+            const afterClickUsedNumberText = getPhoneNumberUsedErrorText();
+            if (afterClickUsedNumberText) {
+              throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${afterClickUsedNumberText}`);
+            }
             const afterClickBannedNumberText = getPhoneResendBannedNumberText();
             if (afterClickBannedNumberText) {
               throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${afterClickBannedNumberText}`);
@@ -980,6 +1018,11 @@
             };
           }
           await sleep(250);
+        }
+
+        const timeoutUsedNumberText = getPhoneNumberUsedErrorText();
+        if (timeoutUsedNumberText) {
+          throw new Error(`${PHONE_RESEND_BANNED_NUMBER_ERROR_PREFIX}${timeoutUsedNumberText}`);
         }
 
         const timeoutBannedNumberText = getPhoneResendBannedNumberText();
