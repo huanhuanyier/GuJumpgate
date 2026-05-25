@@ -6584,6 +6584,12 @@
           }
           throw error;
         }
+        if (!latest?.addPhonePage && allowDirectNavigation) {
+          const navigated = await directNavigateToAddPhone(attemptLabel);
+          if (navigated) {
+            return navigated;
+          }
+        }
         if (!latest?.addPhonePage) {
           throw new Error(
             `步骤 9：提交手机号前认证页未停留在添加手机号页面（${attemptLabel}）。URL: ${latest?.url || 'unknown'}`
@@ -6630,6 +6636,32 @@
         }
         countrySmsFailureCounts.delete(countryKey);
         countryPriceFloorByKey.delete(countryKey);
+      };
+
+      const recoverMissingActivationFromPhoneVerificationPage = async () => {
+        usedNumberReplacementAttempts += 1;
+        if (usedNumberReplacementAttempts > maxNumberReplacementAttempts) {
+          throw buildPhoneReplacementLimitError(maxNumberReplacementAttempts, 'missing_activation_after_cancelled_number');
+        }
+        await addLog(
+          `步骤 9：认证页仍停留在手机验证码页，但当前接码订单已取消或清空，正在重开手机号验证并更换号码（${usedNumberReplacementAttempts}/${maxNumberReplacementAttempts}）。`,
+          'warn'
+        );
+        await clearCurrentActivation();
+        activation = null;
+        shouldCancelActivation = false;
+        preferReuseExistingActivationOnAddPhone = false;
+        addPhoneReentryWithSameActivation = 0;
+        const recovered = await ensureAddPhonePageBeforeSubmit(
+          'missing activation after cancelled number',
+          { allowDirectNavigation: true }
+        );
+        pageState = {
+          ...pageState,
+          ...recovered,
+          addPhonePage: true,
+          phoneVerificationPage: false,
+        };
       };
 
       const getBlockedCountryIds = () => {
@@ -6964,7 +6996,8 @@
           }
 
           if (!activation) {
-            throw new Error('认证页面正在等待手机验证码，但当前运行没有保存手机号接码订单。');
+            await recoverMissingActivationFromPhoneVerificationPage();
+            continue;
           }
 
           let shouldReplaceNumber = false;
