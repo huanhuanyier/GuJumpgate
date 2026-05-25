@@ -119,5 +119,6 @@ test('SMSBower provider exposes reuseActivation and keeps successful numbers reu
   assert.doesNotMatch(reuse, /action:\s*'getNumber'/);
   assert.doesNotMatch(reuse, /number:\s*normalizedActivation\.phoneNumber/);
   assert.match(smsBowerSource, /reuseActivation:\s*\(state,\s*activation\)\s*=>\s*reuseActivation\(state,\s*activation,\s*providerDeps\)/);
-  assert.match(smsBowerSource, /maxUses:\s*Math\.max\(1,\s*Math\.floor\(Number\(record\?\.maxUses\)\s*\|\|\s*3\)\)/);
+  assert.match(phoneFlowSource, /const DEFAULT_PHONE_NUMBER_MAX_USES\s*=\s*30/);
+  assert.match(smsBowerSource, /maxUses:\s*Math\.max\(1,\s*Math\.floor\(Number\(record\?\.maxUses\)\s*\|\|\s*30\)\)/);
 });

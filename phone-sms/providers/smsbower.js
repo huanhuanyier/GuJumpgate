@@ -211,7 +211,7 @@
       countryId: normalizeSmsBowerCountryId(fallback.countryId ?? fallback.id, DEFAULT_COUNTRY_ID),
       countryLabel: normalizeSmsBowerCountryLabel(fallback.countryLabel || fallback.label, DEFAULT_COUNTRY_LABEL),
       successfulUses: Math.max(0, Math.floor(Number(record?.successfulUses) || 0)),
-      maxUses: Math.max(1, Math.floor(Number(record?.maxUses) || 3)),
+      maxUses: Math.max(1, Math.floor(Number(record?.maxUses) || 30)),
       ...(activationCost !== undefined ? { price: Number(activationCost) } : {}),
     };
   }
