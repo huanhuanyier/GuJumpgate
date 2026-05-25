@@ -56,10 +56,12 @@ test('SMSBower signup success defers API completion until the reusable number re
   const deferHelper = extractSnippet(
     phoneFlowSource,
     'function shouldDeferCompletionForReusableActivation',
-    'async function markActivationReusableAfterSuccess'
+    'function createResolvedFiveSimProvider'
   );
   assert.match(deferHelper, /allowPhoneSignup/);
   assert.match(deferHelper, /PHONE_SMS_PROVIDER_SMSBOWER/);
+  assert.doesNotMatch(deferHelper, /isPhoneSmsReuseEnabled\(state\)/);
+  assert.doesNotMatch(deferHelper, /normalizePhoneSmsReuseEnabled\(state\)/);
   assert.match(deferHelper, /successfulUses\s*\+\s*1\s*<\s*normalizedActivation\.maxUses/);
 
   const reusableMarker = extractSnippet(
@@ -68,6 +70,19 @@ test('SMSBower signup success defers API completion until the reusable number re
     'function shouldPreserveActivationForFreeReuse'
   );
   assert.match(reusableMarker, /if\s*\(successfulUses\s*>=\s*normalizedActivation\.maxUses\)\s*\{[\s\S]*?completePhoneActivation\(state,\s*nextReusableActivation\)/);
+  assert.match(reusableMarker, /const forcePersistReusableActivation\s*=\s*reusableProvider\s*===\s*PHONE_SMS_PROVIDER_SMSBOWER/);
+  assert.doesNotMatch(reusableMarker, /if\s*\(\s*!\(\s*allowPhoneSignup\s*\?\s*normalizePhoneSmsReuseEnabled\(state\)\s*:\s*isPhoneSmsReuseEnabled\(state\)\s*\)\s*\)/);
+  assert.match(reusableMarker, /if\s*\(!forcePersistReusableActivation\s*&&\s*!normalizePhoneSmsReuseEnabled\(state\)\)/);
+});
+
+test('SMSBower saved successful numbers are reused even when the generic reuse switch is off', () => {
+  const acquire = extractSnippet(
+    phoneFlowSource,
+    'async function acquirePhoneActivation',
+    'let lastProviderError = null'
+  );
+  assert.match(acquire, /const forceSavedActivationReuse\s*=\s*provider\s*===\s*PHONE_SMS_PROVIDER_SMSBOWER/);
+  assert.match(acquire, /if\s*\(\(reuseEnabled\s*\|\|\s*forceSavedActivationReuse\)\s*&&\s*isReusableActivationProvider\(provider\)\)/);
 });
 
 test('SMSBower post-login phone success defers API completion and stores the number for the next account', () => {

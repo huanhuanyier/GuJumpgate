@@ -1195,9 +1195,6 @@
       if (normalizedActivation.provider !== PHONE_SMS_PROVIDER_SMSBOWER) {
         return false;
       }
-      if (!(allowPhoneSignup ? normalizePhoneSmsReuseEnabled(state) : isPhoneSmsReuseEnabled(state))) {
-        return false;
-      }
       return normalizedActivation.successfulUses + 1 < normalizedActivation.maxUses;
     }
 
@@ -5258,6 +5255,7 @@
         }
       }
       const reuseEnabled = shouldUseSavedActivationReuse(state, options);
+      const forceSavedActivationReuse = provider === PHONE_SMS_PROVIDER_SMSBOWER;
       const reusableActivation = normalizeActivation(state[REUSABLE_PHONE_ACTIVATION_STATE_KEY]);
       const reusableActivationPool = readReusableActivationPoolFromState(state);
       const reusableCandidates = [];
@@ -5277,7 +5275,7 @@
       pushReusableCandidate(reusableActivation);
       reusableActivationPool.forEach((candidate) => pushReusableCandidate(candidate));
 
-      if (reuseEnabled && isReusableActivationProvider(provider)) {
+      if ((reuseEnabled || forceSavedActivationReuse) && isReusableActivationProvider(provider)) {
         for (const candidateActivation of reusableCandidates) {
           if (candidateActivation.provider !== provider) {
             continue;
@@ -5417,17 +5415,21 @@
       if (isPhoneSignupIdentityState(state) && !allowPhoneSignup) {
         return;
       }
-      if (!(allowPhoneSignup ? normalizePhoneSmsReuseEnabled(state) : isPhoneSmsReuseEnabled(state))) {
-        await clearReusableActivation();
-        return;
-      }
       if (!normalizedActivation) {
         await clearReusableActivation();
         return;
       }
       const reusableProvider = normalizedActivation.provider;
       const canPersistReusableActivation = isReusableActivationProvider(reusableProvider);
+      const forcePersistReusableActivation = reusableProvider === PHONE_SMS_PROVIDER_SMSBOWER;
       if (!canPersistReusableActivation) {
+        await clearReusableActivation();
+        return;
+      }
+      if (
+        !forcePersistReusableActivation
+        && !(allowPhoneSignup ? normalizePhoneSmsReuseEnabled(state) : isPhoneSmsReuseEnabled(state))
+      ) {
         await clearReusableActivation();
         return;
       }
@@ -5440,7 +5442,7 @@
       delete nextReusableActivation.phoneCodeReceived;
       delete nextReusableActivation.phoneCodeReceivedAt;
       await upsertReusableActivationPool(nextReusableActivation, { state });
-      if (!normalizePhoneSmsReuseEnabled(state)) {
+      if (!forcePersistReusableActivation && !normalizePhoneSmsReuseEnabled(state)) {
         await clearReusableActivation();
         return;
       }
