@@ -11,6 +11,7 @@ importScripts(
   'gopay-utils.js',
   'phone-sms/providers/hero-sms.js',
   'phone-sms/providers/five-sim.js',
+  'phone-sms/providers/smsbower.js',
   'phone-sms/providers/registry.js',
   'background/phone-verification-flow.js',
   'background/account-run-history.js',
@@ -72,6 +73,7 @@ importScripts(
 
 const DEFAULT_ACTIVE_FLOW_ID = 'openai';
 const PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH = 'oauth';
+const PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH = 'sms_oauth';
 const PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION = 'sub2api_codex_session';
 const PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION = 'cpa_codex_session';
 const NORMAL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
@@ -94,6 +96,13 @@ const PLUS_PAYPAL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   plusModeEnabled: true,
   plusPaymentMethod: 'paypal',
 }) || NORMAL_STEP_DEFINITIONS;
+const PLUS_PAYPAL_SMS_OAUTH_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  plusModeEnabled: true,
+  plusPaymentMethod: 'paypal',
+  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH,
+  signupMethod: 'phone',
+}) || PLUS_PAYPAL_STEP_DEFINITIONS;
 const PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   plusModeEnabled: true,
@@ -563,18 +572,28 @@ const PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MIN_SECONDS = 0;
 const PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_MAX_SECONDS = 3600;
 const HOSTED_CHECKOUT_VERIFICATION_POPUP_DELAY_MIN_SECONDS = 0;
 const HOSTED_CHECKOUT_VERIFICATION_POPUP_DELAY_MAX_SECONDS = 60;
+const HOSTED_CHECKOUT_RESEND_WAIT_MIN_SECONDS = 0;
+const HOSTED_CHECKOUT_RESEND_WAIT_MAX_SECONDS = 300;
+const HOSTED_CHECKOUT_FIRST_RESEND_WAIT_DEFAULT_SECONDS = 20;
+const HOSTED_CHECKOUT_SUBSEQUENT_RESEND_WAIT_DEFAULT_SECONDS = 25;
+const HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS_DEFAULT = 1;
+const HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS_LIMIT = 10;
+const HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_DEFAULT = 6;
+const HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_LIMIT = 60;
+const HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_DEFAULT_SECONDS = 5;
+const HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_LIMIT_SECONDS = 60;
 const OUTLOOK_ALIAS_DEFAULT_MAX_PER_ACCOUNT = 5;
 const OUTLOOK_ALIAS_MAX_PER_ACCOUNT_LIMIT = 50;
 const OUTLOOK_SUBSCRIPTION_USED_KEYWORD = 'ChatGPT Plus Subscription';
 const VERIFICATION_RESEND_COUNT_MIN = 0;
 const VERIFICATION_RESEND_COUNT_MAX = 20;
-const DEFAULT_VERIFICATION_RESEND_COUNT = 4;
+const DEFAULT_VERIFICATION_RESEND_COUNT = 0;
 const PHONE_REPLACEMENT_LIMIT_MIN = 1;
 const PHONE_REPLACEMENT_LIMIT_MAX = 20;
 const DEFAULT_PHONE_VERIFICATION_REPLACEMENT_LIMIT = 3;
 const PHONE_CODE_WAIT_SECONDS_MIN = 15;
 const PHONE_CODE_WAIT_SECONDS_MAX = 300;
-const DEFAULT_PHONE_CODE_WAIT_SECONDS = 60;
+const DEFAULT_PHONE_CODE_WAIT_SECONDS = 120;
 const PHONE_CODE_TIMEOUT_WINDOWS_MIN = 1;
 const PHONE_CODE_TIMEOUT_WINDOWS_MAX = 10;
 const DEFAULT_PHONE_CODE_TIMEOUT_WINDOWS = 2;
@@ -604,18 +623,20 @@ const DEFAULT_LUCKMAIL_PROJECT_CODE = 'openai';
 const DEFAULT_HERO_SMS_BASE_URL = 'https://hero-sms.com/stubs/handler_api.php';
 const HERO_SMS_SERVICE_CODE = 'dr';
 const HERO_SMS_SERVICE_LABEL = 'OpenAI';
-const HERO_SMS_COUNTRY_ID = 52;
-const HERO_SMS_COUNTRY_LABEL = 'Thailand';
+const HERO_SMS_COUNTRY_ID = 33;
+const HERO_SMS_COUNTRY_LABEL = 'Colombia';
 const PHONE_SMS_PROVIDER_HERO = 'hero-sms';
 const PHONE_SMS_PROVIDER_5SIM = '5sim';
 const PHONE_SMS_PROVIDER_HERO_SMS = PHONE_SMS_PROVIDER_HERO;
 const PHONE_SMS_PROVIDER_FIVE_SIM = PHONE_SMS_PROVIDER_5SIM;
 const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_SMSBOWER = 'smsbower';
 const DEFAULT_PHONE_SMS_PROVIDER = PHONE_SMS_PROVIDER_HERO;
 const DEFAULT_PHONE_SMS_PROVIDER_ORDER = Object.freeze([
   PHONE_SMS_PROVIDER_HERO,
   PHONE_SMS_PROVIDER_5SIM,
   PHONE_SMS_PROVIDER_NEXSMS,
+  PHONE_SMS_PROVIDER_SMSBOWER,
 ]);
 const DEFAULT_FIVE_SIM_BASE_URL = 'https://5sim.net/v1';
 const DEFAULT_FIVE_SIM_PRODUCT = 'openai';
@@ -624,6 +645,8 @@ const DEFAULT_FIVE_SIM_COUNTRY_ORDER = Object.freeze(['thailand']);
 const DEFAULT_NEX_SMS_BASE_URL = 'https://api.nexsms.net';
 const DEFAULT_NEX_SMS_SERVICE_CODE = 'ot';
 const DEFAULT_NEX_SMS_COUNTRY_ORDER = Object.freeze([1]);
+const DEFAULT_SMSBOWER_BASE_URL = 'https://smsbower.page/stubs/handler_api.php';
+const DEFAULT_SMSBOWER_SERVICE_CODE = 'dr';
 const DEFAULT_HERO_SMS_REUSE_ENABLED = true;
 const HERO_SMS_ACQUIRE_PRIORITY_COUNTRY = 'country';
 const HERO_SMS_ACQUIRE_PRIORITY_PRICE = 'price';
@@ -633,16 +656,23 @@ const FIVE_SIM_COUNTRY_ID = 'vietnam';
 const FIVE_SIM_COUNTRY_LABEL = '越南 (Vietnam)';
 const FIVE_SIM_SUPPORTED_COUNTRY_IDS = ['indonesia', 'thailand', 'vietnam'];
 const FIVE_SIM_SUPPORTED_COUNTRY_ID_SET = new Set(FIVE_SIM_SUPPORTED_COUNTRY_IDS);
-const HERO_SMS_SUPPORTED_COUNTRY_IDS = [6, 52, 187, 16, 151, 43, 73, 10];
+const HERO_SMS_SUPPORTED_COUNTRY_IDS = [4, 6, 8, 10, 15, 16, 32, 33, 43, 52, 73, 78, 151, 182, 187];
 const HERO_SMS_SUPPORTED_COUNTRY_ID_SET = new Set(HERO_SMS_SUPPORTED_COUNTRY_IDS.map(String));
 const HERO_SMS_COUNTRY_BY_PHONE_PREFIX = Object.freeze([
+  { prefix: '63', id: 4, label: 'Philippines' },
   { prefix: '84', id: 10, label: 'Vietnam' },
+  { prefix: '48', id: 15, label: 'Poland' },
+  { prefix: '254', id: 8, label: 'Kenya' },
   { prefix: '66', id: 52, label: 'Thailand' },
+  { prefix: '40', id: 32, label: 'Romania' },
+  { prefix: '57', id: 33, label: 'Colombia' },
   { prefix: '62', id: 6, label: 'Indonesia' },
   { prefix: '44', id: 16, label: 'United Kingdom' },
-  { prefix: '81', id: 151, label: 'Japan' },
+  { prefix: '81', id: 182, label: 'Japan' },
   { prefix: '49', id: 43, label: 'Germany' },
-  { prefix: '33', id: 73, label: 'France' },
+  { prefix: '55', id: 73, label: 'Brazil' },
+  { prefix: '33', id: 78, label: 'France' },
+  { prefix: '56', id: 151, label: 'Chile' },
   { prefix: '1', id: 187, label: 'USA' },
 ]);
 const FIVE_SIM_OPERATOR = DEFAULT_FIVE_SIM_OPERATOR;
@@ -1000,6 +1030,13 @@ const PERSISTED_SETTING_DEFAULTS = {
   hostedCheckoutPhoneNumber: '',
   hostedCheckoutSmsPoolText: '',
   hostedCheckoutSmsPoolUsage: {},
+  hostedCheckoutSmsPoolAutoDisableEnabled: false,
+  hostedCheckoutFirstDirectResendEnabled: false,
+  hostedCheckoutFirstResendWaitSeconds: HOSTED_CHECKOUT_FIRST_RESEND_WAIT_DEFAULT_SECONDS,
+  hostedCheckoutSubsequentResendWaitSeconds: HOSTED_CHECKOUT_SUBSEQUENT_RESEND_WAIT_DEFAULT_SECONDS,
+  hostedCheckoutVerificationResendMaxAttempts: HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS_DEFAULT,
+  hostedCheckoutVerificationPollAttempts: HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_DEFAULT,
+  hostedCheckoutVerificationPollIntervalSeconds: HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_DEFAULT_SECONDS,
   paypalEmail: '',
   paypalPassword: '',
   currentPayPalAccountId: '',
@@ -1147,6 +1184,15 @@ const PERSISTED_SETTING_DEFAULTS = {
   nexSmsApiKey: '',
   nexSmsCountryOrder: [...DEFAULT_NEX_SMS_COUNTRY_ORDER],
   nexSmsServiceCode: DEFAULT_NEX_SMS_SERVICE_CODE,
+  smsBowerApiKey: '',
+  smsBowerBaseUrl: DEFAULT_SMSBOWER_BASE_URL,
+  smsBowerServiceCode: DEFAULT_SMSBOWER_SERVICE_CODE,
+  smsBowerCountryId: HERO_SMS_COUNTRY_ID,
+  smsBowerCountryLabel: HERO_SMS_COUNTRY_LABEL,
+  smsBowerCountryFallback: [],
+  smsBowerMinPrice: '',
+  smsBowerMaxPrice: '',
+  smsBowerPreferredPrice: '',
   phonePreferredActivation: null,
 };
 
@@ -1430,6 +1476,99 @@ function normalizeHostedCheckoutVerificationPopupDelaySeconds(value, fallback = 
   );
 }
 
+function normalizeHostedCheckoutResendWaitSeconds(value, fallback = HOSTED_CHECKOUT_FIRST_RESEND_WAIT_DEFAULT_SECONDS) {
+  const rawValue = String(value ?? '').trim();
+  const fallbackValue = Math.min(
+    HOSTED_CHECKOUT_RESEND_WAIT_MAX_SECONDS,
+    Math.max(HOSTED_CHECKOUT_RESEND_WAIT_MIN_SECONDS, Math.floor(Number(fallback) || 0))
+  );
+  if (!rawValue) {
+    return fallbackValue;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return fallbackValue;
+  }
+
+  return Math.min(
+    HOSTED_CHECKOUT_RESEND_WAIT_MAX_SECONDS,
+    Math.max(HOSTED_CHECKOUT_RESEND_WAIT_MIN_SECONDS, Math.floor(numeric))
+  );
+}
+
+function normalizeHostedCheckoutVerificationResendMaxAttempts(
+  value,
+  fallback = HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS_DEFAULT
+) {
+  const rawValue = String(value ?? '').trim();
+  const fallbackValue = Math.min(
+    HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS_LIMIT,
+    Math.max(0, Math.floor(Number(fallback) || 0))
+  );
+  if (!rawValue) {
+    return fallbackValue;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return fallbackValue;
+  }
+
+  return Math.min(
+    HOSTED_CHECKOUT_VERIFICATION_RESEND_MAX_ATTEMPTS_LIMIT,
+    Math.max(0, Math.floor(numeric))
+  );
+}
+
+function normalizeHostedCheckoutVerificationPollAttempts(
+  value,
+  fallback = HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_DEFAULT
+) {
+  const rawValue = String(value ?? '').trim();
+  const fallbackValue = Math.min(
+    HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_LIMIT,
+    Math.max(1, Math.floor(Number(fallback) || HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_DEFAULT))
+  );
+  if (!rawValue) {
+    return fallbackValue;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return fallbackValue;
+  }
+
+  return Math.min(
+    HOSTED_CHECKOUT_VERIFICATION_POLL_ATTEMPTS_LIMIT,
+    Math.max(1, Math.floor(numeric))
+  );
+}
+
+function normalizeHostedCheckoutVerificationPollIntervalSeconds(
+  value,
+  fallback = HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_DEFAULT_SECONDS
+) {
+  const rawValue = String(value ?? '').trim();
+  const fallbackValue = Math.min(
+    HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_LIMIT_SECONDS,
+    Math.max(1, Math.floor(Number(fallback) || HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_DEFAULT_SECONDS))
+  );
+  if (!rawValue) {
+    return fallbackValue;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return fallbackValue;
+  }
+
+  return Math.min(
+    HOSTED_CHECKOUT_VERIFICATION_POLL_INTERVAL_LIMIT_SECONDS,
+    Math.max(1, Math.floor(numeric))
+  );
+}
+
 function normalizeOutlookAliasMaxPerAccount(value, fallback = OUTLOOK_ALIAS_DEFAULT_MAX_PER_ACCOUNT) {
   const rawValue = String(value ?? '').trim();
   const fallbackNumber = Number(fallback);
@@ -1570,6 +1709,18 @@ function normalizeLocalHttpBaseUrl(value = '', fallback = 'http://127.0.0.1:1876
   }
 }
 
+function normalizeUrl(value = '', fallback = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  try {
+    return new URL(trimmed).toString();
+  } catch {
+    return fallback;
+  }
+}
+
 function normalizeHeroSmsMaxPrice(value = '') {
   const rawValue = String(value ?? '').trim();
   if (!rawValue) {
@@ -1649,6 +1800,9 @@ function normalizePhoneSmsProvider(value = '') {
   }
   if (normalized === PHONE_SMS_PROVIDER_NEXSMS) {
     return PHONE_SMS_PROVIDER_NEXSMS;
+  }
+  if (normalized === PHONE_SMS_PROVIDER_SMSBOWER) {
+    return PHONE_SMS_PROVIDER_SMSBOWER;
   }
   return PHONE_SMS_PROVIDER_HERO_SMS;
 }
@@ -2591,6 +2745,9 @@ function normalizePanelMode(value = '') {
 
 function normalizePlusAccountAccessStrategy(value = '') {
   const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH) {
+    return PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH;
+  }
   if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
     return PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION;
   }
@@ -2605,6 +2762,9 @@ function normalizePlusAccountAccessStrategyForState(state = {}) {
     ? getPanelMode(state)
     : normalizePanelMode(state?.panelMode);
   const strategy = normalizePlusAccountAccessStrategy(state?.plusAccountAccessStrategy);
+  if ((panelMode === 'cpa' || panelMode === 'local-cpa-json' || panelMode === 'local-cpa-json-no-rt') && strategy === PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH) {
+    return PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH;
+  }
   if (panelMode === 'sub2api' && strategy === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
     return PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION;
   }
@@ -3089,8 +3249,41 @@ function normalizePersistentSettingValue(key, value) {
           lastAttemptAt: Math.max(0, Number(item.lastAttemptAt) || 0),
           lastError: String(item.lastError || '').trim(),
           ...(excelSource?.filePath && excelSource.rowNumber > 0 ? { excelSource } : {}),
+          enabled: item.enabled !== false,
+          disabledReason: String(item.disabledReason || '').trim(),
+          disabledAt: Math.max(0, Number(item.disabledAt) || 0),
+          failureCount: Math.max(0, Math.floor(Number(item.failureCount) || 0)),
         }];
       }).filter(([key]) => Boolean(key)));
+    case 'hostedCheckoutSmsPoolAutoDisableEnabled':
+      return Boolean(value);
+    case 'hostedCheckoutFirstDirectResendEnabled':
+      return Boolean(value);
+    case 'hostedCheckoutFirstResendWaitSeconds':
+      return normalizeHostedCheckoutResendWaitSeconds(
+        value,
+        PERSISTED_SETTING_DEFAULTS.hostedCheckoutFirstResendWaitSeconds
+      );
+    case 'hostedCheckoutSubsequentResendWaitSeconds':
+      return normalizeHostedCheckoutResendWaitSeconds(
+        value,
+        PERSISTED_SETTING_DEFAULTS.hostedCheckoutSubsequentResendWaitSeconds
+      );
+    case 'hostedCheckoutVerificationResendMaxAttempts':
+      return normalizeHostedCheckoutVerificationResendMaxAttempts(
+        value,
+        PERSISTED_SETTING_DEFAULTS.hostedCheckoutVerificationResendMaxAttempts
+      );
+    case 'hostedCheckoutVerificationPollAttempts':
+      return normalizeHostedCheckoutVerificationPollAttempts(
+        value,
+        PERSISTED_SETTING_DEFAULTS.hostedCheckoutVerificationPollAttempts
+      );
+    case 'hostedCheckoutVerificationPollIntervalSeconds':
+      return normalizeHostedCheckoutVerificationPollIntervalSeconds(
+        value,
+        PERSISTED_SETTING_DEFAULTS.hostedCheckoutVerificationPollIntervalSeconds
+      );
     case 'paypalEmail':
       return String(value || '').trim();
     case 'paypalPassword':
@@ -3402,6 +3595,27 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeNexSmsCountryOrder(value);
     case 'nexSmsServiceCode':
       return normalizeNexSmsServiceCode(value);
+    case 'smsBowerApiKey':
+      return String(value || '');
+    case 'smsBowerBaseUrl':
+      return normalizeUrl(value, DEFAULT_SMSBOWER_BASE_URL);
+    case 'smsBowerServiceCode':
+      return normalizeNexSmsServiceCode(value, DEFAULT_SMSBOWER_SERVICE_CODE);
+    case 'smsBowerCountryId': {
+      const parsed = Math.floor(Number(value));
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+      return HERO_SMS_COUNTRY_ID;
+    }
+    case 'smsBowerCountryLabel':
+      return String(value || HERO_SMS_COUNTRY_LABEL).trim() || HERO_SMS_COUNTRY_LABEL;
+    case 'smsBowerCountryFallback':
+      return normalizeHeroSmsCountryFallback(value);
+    case 'smsBowerMinPrice':
+    case 'smsBowerMaxPrice':
+    case 'smsBowerPreferredPrice':
+      return normalizeHeroSmsMaxPrice(value);
     case 'phonePreferredActivation':
       return normalizePhonePreferredActivation(value);
     default:
@@ -9806,6 +10020,11 @@ function isHostedCheckoutGenericErrorFailure(error) {
   return /HOSTED_CHECKOUT_GENERIC_ERROR::|Things\s+don[’']?t\s+appear\s+to\s+be\s+working\s+at\s+the\s+moment|Sorry,\s*something\s+went\s+wrong\.?\s*Please\s+try\s+again/i.test(message);
 }
 
+function isHostedCheckoutCardFallbackFailure(error) {
+  const message = getErrorMessage(error);
+  return /HOSTED_CHECKOUT_CARD_FALLBACK::|hosted checkout[\s\S]*(?:落到|进入).*(?:银行卡|card)[\s\S]*(?:分支|支付)|未进入\s*PayPal|未跳转到\s*PayPal/i.test(message);
+}
+
 function isHostedCheckoutVerificationResendLimitFailure(error) {
   const message = getErrorMessage(error);
   return /HOSTED_CHECKOUT_VERIFICATION_RESEND_LIMIT::|PayPal 验证码自动 Resend 重试已达到上限|请尝试在页面手动获取验证码并填入/i.test(message);
@@ -9845,6 +10064,13 @@ function isPlusCheckoutRestartRequiredFailure(error) {
     && !isHostedCheckoutGenericErrorFailure(error)
     && !isHostedCheckoutVerificationResendLimitFailure(error)
     && !isCloudCheckoutAlreadyPaidFailure(error);
+}
+
+function shouldRetrySmsOauthNonFreeTrialFromStep7(state = {}, error = null) {
+  return isPlusCheckoutNonFreeTrialFailure(error)
+    && isPlusModeState(state)
+    && normalizePlusPaymentMethod(state?.plusPaymentMethod) === PLUS_PAYMENT_METHOD_PAYPAL
+    && normalizePlusAccountAccessStrategyForState(state) === PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH;
 }
 
 function isGoPayCheckoutRestartRequiredFailure(error) {
@@ -11396,8 +11622,11 @@ async function completeNodeFromBackground(nodeId, payload = {}) {
 
   if (normalizedNodeId === lastNodeId) {
     notifyNodeComplete(normalizedNodeId, payload);
-    void runCompletedNodeSideEffects(normalizedNodeId, payload, completionState, lastNodeId)
-      .catch((error) => reportCompletedNodeSideEffectError(normalizedNodeId, error));
+    try {
+      await runCompletedNodeSideEffects(normalizedNodeId, payload, completionState, lastNodeId);
+    } catch (error) {
+      await reportCompletedNodeSideEffectError(normalizedNodeId, error);
+    }
     return;
   }
 
@@ -13431,6 +13660,19 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
 
       const step = getDisplayStepForNode(nodeId, latestState);
       const nodeExecutionKey = getNodeExecutionKey(nodeId, latestState);
+      if (shouldRetrySmsOauthNonFreeTrialFromStep7(latestState, err)) {
+        plusCheckoutRestartCount += 1;
+        await addLog(
+          `节点 ${getNodeLabel(nodeId, latestState)}：先手机号注册 OAuth 检测到 Plus 今日应付金额非 0，将保留当前注册流程并直接回到第 7 步 plus-checkout-create 重试（第 ${plusCheckoutRestartCount} 次）。原因：${getErrorMessage(err)}`,
+          'warn'
+        );
+        const checkoutResetAnchorNodeId = getPreviousNodeId('plus-checkout-create', latestState) || 'fill-profile';
+        await invalidateDownstreamAfterAutoRunNodeRestart(checkoutResetAnchorNodeId, {
+          logLabel: `先手机号注册 OAuth 非 0 金额后回到第 7 步 plus-checkout-create 重试（第 ${plusCheckoutRestartCount} 次）`,
+        });
+        nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
+        continue;
+      }
       const isGpcCheckoutStep = normalizePlusPaymentMethodForRun(latestState?.plusPaymentMethod) === plusPaymentMethodGpcHelper
         || String(latestState?.plusCheckoutSource || '').trim() === plusPaymentMethodGpcHelper;
       if (isPlusCheckoutRestartStep(step, nodeExecutionKey, latestState)
@@ -13783,6 +14025,8 @@ const phoneVerificationHelpers = self.MultiPageBackgroundPhoneVerification?.crea
   DEFAULT_NEX_SMS_BASE_URL,
   DEFAULT_NEX_SMS_COUNTRY_ORDER,
   DEFAULT_NEX_SMS_SERVICE_CODE,
+  DEFAULT_SMSBOWER_BASE_URL,
+  DEFAULT_SMSBOWER_SERVICE_CODE,
   DEFAULT_HERO_SMS_BASE_URL,
   DEFAULT_HERO_SMS_REUSE_ENABLED,
   DEFAULT_PHONE_CODE_WAIT_SECONDS,
@@ -13828,6 +14072,7 @@ const phoneVerificationHelpers = self.MultiPageBackgroundPhoneVerification?.crea
   sleepWithStop,
   throwIfStopped,
   createFiveSimProvider: self.PhoneSmsFiveSimProvider?.createProvider,
+  createSmsBowerProvider: self.PhoneSmsBowerProvider?.createProvider,
 });
 const step1Executor = self.MultiPageBackgroundStep1?.createStep1Executor({
   addLog,
@@ -14241,6 +14486,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
     plusPaymentMethod: normalizePlusPaymentMethod(state?.plusPaymentMethod),
   }),
   exportSettingsBundle,
+  ensureContentScriptReadyOnTabUntilStopped,
   fetchHostedCheckoutVerificationCodeManually: (...args) => plusCheckoutCreateExecutor.fetchHostedCheckoutVerificationCodeManually(...args),
   testCheckoutConversionProxy: (...args) => plusCheckoutCreateExecutor.testCheckoutConversionProxy(...args),
   fetchGeneratedEmail,
@@ -14313,7 +14559,9 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   resetState,
   resumeAutoRun,
   scheduleAutoRun,
+  sendTabMessageUntilStopped,
   selectLuckmailPurchase,
+  sleepWithStop,
   switchIpProxy: null,
   changeIpProxyExit: null,
   setCurrentPayPalAccount,
@@ -14338,6 +14586,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   skipNode,
   startContributionFlow: (...args) => contributionOAuthManager?.startContributionFlow?.(...args),
   startAutoRunLoop,
+  waitForTabCompleteUntilStopped,
   pollContributionStatus: (...args) => contributionOAuthManager?.pollContributionStatus?.(...args),
   syncHotmailAccounts,
   syncPayPalAccounts,
@@ -14391,6 +14640,7 @@ const normalStepRegistry = buildStepRegistry(NORMAL_STEP_DEFINITIONS);
 const normalPhoneStepRegistry = buildStepRegistry(NORMAL_PHONE_STEP_DEFINITIONS);
 const normalPhoneBoundEmailReloginStepRegistry = buildStepRegistry(NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS);
 const plusPayPalStepRegistry = buildStepRegistry(PLUS_PAYPAL_STEP_DEFINITIONS);
+const plusPayPalSmsOauthStepRegistry = buildStepRegistry(PLUS_PAYPAL_SMS_OAUTH_STEP_DEFINITIONS);
 const plusPayPalPhoneStepRegistry = buildStepRegistry(PLUS_PAYPAL_PHONE_STEP_DEFINITIONS);
 const plusPayPalPhoneBoundEmailReloginStepRegistry = buildStepRegistry(PLUS_PAYPAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS);
 const plusPayPalSub2ApiSessionStepRegistry = buildStepRegistry(PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS);
@@ -14428,6 +14678,9 @@ function getStepRegistryForState(state = {}) {
   const plusAccountAccessStrategy = signupMethod === SIGNUP_METHOD_PHONE
     ? PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH
     : normalizePlusAccountAccessStrategyForState(state);
+  if (paymentMethod === PLUS_PAYMENT_METHOD_PAYPAL && normalizePlusAccountAccessStrategyForState(state) === PLUS_ACCOUNT_ACCESS_STRATEGY_SMS_OAUTH) {
+    return plusPayPalSmsOauthStepRegistry;
+  }
   if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
     if (plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
       return plusGpcSub2ApiSessionStepRegistry;
@@ -15077,13 +15330,43 @@ async function recoverStep5SubmitRetryPageOnTab(options = {}) {
   return result || {};
 }
 
+async function skipCreateAccountEnrollPasskeyOnTab(options = {}) {
+  const result = await sendToContentScriptResilient(
+    'signup-page',
+    {
+      type: 'SKIP_CREATE_ACCOUNT_ENROLL_PASSKEY',
+      source: 'background',
+      payload: {
+        timeoutMs: options.timeoutMs ?? 15000,
+        settleMs: options.settleMs ?? 1200,
+      },
+    },
+    {
+      timeoutMs: options.timeoutMs ?? 18000,
+      retryDelayMs: options.retryDelayMs ?? 600,
+      responseTimeoutMs: options.responseTimeoutMs ?? (options.timeoutMs ?? 18000),
+      logMessage: options.logMessage || '步骤 5：通行密钥页正在等待“跳过”按钮重新就绪...',
+      logStep: 5,
+      logStepKey: options.logStepKey || 'fill-profile',
+    }
+  );
+
+  if (result?.error) {
+    throw new Error(result.error);
+  }
+
+  return result || {};
+}
+
 async function validateStep5PostCompletion(tabId, completionPayload = {}) {
   if (!Number.isInteger(tabId)) {
     throw new Error('步骤 5：缺少有效的资料页标签页，无法确认提交后的最终状态。');
   }
 
   const maxAuthRetryRecoveries = Math.max(1, Number(completionPayload?.maxAuthRetryRecoveries) || 2);
+  const maxPasskeySkipAttempts = Math.max(1, Number(completionPayload?.maxPasskeySkipAttempts) || 2);
   let authRetryRecoveryCount = 0;
+  let passkeySkipCount = 0;
 
   while (true) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
@@ -15122,6 +15405,30 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
         timeoutMs: 15000,
         retryDelayMs: 600,
         logMessage: '步骤 5：资料提交后的认证重试页正在恢复，等待“重试”按钮重新就绪...',
+      });
+      await waitForTabStableComplete(tabId, {
+        timeoutMs: 30000,
+        retryDelayMs: 300,
+        stableMs: 1000,
+        initialDelayMs: 300,
+      }).catch(() => null);
+      continue;
+    }
+
+    if (pageState.passkeyEnrollPage) {
+      if (passkeySkipCount >= maxPasskeySkipAttempts) {
+        throw new Error(`步骤 5：资料提交后连续进入通行密钥页 ${maxPasskeySkipAttempts} 次，页面仍未继续。URL: ${pageState.url || currentUrl || 'unknown'}`);
+      }
+      passkeySkipCount += 1;
+      await addLog(`步骤 5：提交完成信号后检测到通行密钥页，正在自动点击“跳过”（${passkeySkipCount}/${maxPasskeySkipAttempts}）...`, 'warn', {
+        step: 5,
+        stepKey: 'fill-profile',
+      });
+      await skipCreateAccountEnrollPasskeyOnTab({
+        timeoutMs: 15000,
+        settleMs: 1200,
+        retryDelayMs: 600,
+        logMessage: '步骤 5：通行密钥页已打开，正在等待“跳过”按钮重新就绪...',
       });
       await waitForTabStableComplete(tabId, {
         timeoutMs: 30000,
